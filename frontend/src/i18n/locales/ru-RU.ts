@@ -13,6 +13,11 @@ export default {
     clearMessagesFailed: 'Не удалось очистить сообщения, попробуйте позже',
     batchManage: 'Пакетное управление',
     newSession: 'Новый диалог',
+    pin: 'Закрепить',
+    unpin: 'Открепить',
+    pinned: 'Закреплено',
+    pinFailed: 'Не удалось закрепить, попробуйте позже',
+    unpinFailed: 'Не удалось открепить, попробуйте позже',
     confirmLogout: 'Вы уверены, что хотите выйти?',
     systemInfo: 'Информация о системе',
     knowledgeSearch: 'Поиск',
@@ -1391,6 +1396,13 @@ export default {
       copyUrlTitle: 'Скопировать URL API',
       urlCopySuccess: 'URL API скопирован в буфер обмена',
       copyTitle: 'Скопировать API Key',
+      resetTitle: 'Сбросить API Key',
+      resetConfirmTitle: 'Сбросить API Key?',
+      resetConfirmBody: 'После сброса прежний API Key немедленно перестаёт действовать. Все приложения, SDK и скрипты, использующие старый ключ, должны быть переведены на новый ключ. Это действие нельзя отменить.',
+      resetConfirmOk: 'Сбросить',
+      resetConfirmCancel: 'Отмена',
+      resetSuccess: 'API Key сброшен; новый ключ показан в поле выше',
+      resetFailed: 'Не удалось сбросить API Key',
       docLabel: 'Документация API',
       docDescription: 'Ознакомьтесь с полной документацией и примерами API,',
       openDoc: 'Открыть документацию',
@@ -1499,7 +1511,8 @@ export default {
     },
     tenant: {
       listFailed: 'Не удалось получить список тенантов',
-      searchFailed: 'Не удалось выполнить поиск тенантов'
+      searchFailed: 'Не удалось выполнить поиск тенантов',
+      resetApiKeyFailed: 'Не удалось сбросить API Key'
     },
     initialization: {
       checkFailed: 'Проверка не пройдена',
@@ -2375,7 +2388,8 @@ export default {
     last7Days: 'Последние 7 дней',
     last30Days: 'Последние 30 дней',
     lastYear: 'Последний год',
-    earlier: 'Ранее'
+    earlier: 'Ранее',
+    pinned: 'Закреплено',
   },
   upload: {
     uploadDocument: 'Загрузить документ',
@@ -2652,6 +2666,13 @@ export default {
   modelSettings: {
     title: 'Настройки моделей',
     description: 'Управление типами AI‑моделей: локальные (Ollama) и удалённые API',
+    typeShort: {
+      chat: 'Чат',
+      embedding: 'Embedding',
+      rerank: 'ReRank',
+      vllm: 'Зрение',
+      asr: 'Речь',
+    },
     actions: {
       addModel: 'Добавить модель',
       setDefault: 'Сделать по умолчанию'
@@ -3931,5 +3952,30 @@ export default {
     syncResultCreated: '+{n}',
     syncResultUpdated: '~{n}',
     syncResultDeleted: '-{n}',
+  },
+  imOverview: {
+    menuTitle: 'Подключённые IM',
+    pageTitle: 'Подключённые IM',
+    subtitle: 'Все IM-каналы агентов этого арендатора — переключение состояния или переход к владеющему агенту',
+    totalCount: 'Всего: {count}',
+    empty: 'В этом арендаторе пока не настроены IM-боты',
+    loadFailed: 'Не удалось загрузить список IM-ботов',
+    builtinAgent: 'Встроенный агент',
+    liveIndicator: 'IM-каналы работают',
+    detailsTitle: 'Детали IM-бота',
+    gotoAgentEditor: 'Открыть в редакторе агента',
+    outputMode: 'Режим вывода',
+    sessionMode: 'Режим сессии',
+    updatedAt: 'Обновлено',
+    channelId: 'ID канала',
+    columns: {
+      platform: 'Платформа',
+      name: 'Имя',
+      agent: 'Агент',
+      mode: 'Режим',
+      enabled: 'Включено',
+      botIdentity: 'Идентификатор бота',
+      createdAt: 'Создано',
+    },
   },
 }

@@ -3024,6 +3024,7 @@ async function createNewSession(value: string): Promise<void> {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  position: relative; /* 作为批量工具栏悬浮的定位上下文 */
 }
 
 .doc-filter-bar {
@@ -3137,10 +3138,21 @@ async function createNewSession(value: string): Promise<void> {
   }
 }
 
-/* 批量条在滚动区外，始终贴主内容列底部，不随列表高度在列内上下漂移 */
+/* 批量条悬浮在滚动区底部，不挤占列表高度 */
 .doc-batch-bar-anchor {
-  flex-shrink: 0;
-  padding-top: 4px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 12px;
+  z-index: 6;
+  display: flex;
+  justify-content: center;
+  padding: 0 16px;
+  pointer-events: none;
+
+  & > * {
+    pointer-events: auto;
+  }
 }
 
 // Header 样式（无底部分割线，留更多空间给下方内容区）
@@ -3812,20 +3824,23 @@ async function createNewSession(value: string): Promise<void> {
   cursor: pointer;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
 
-  /* 初始态略可见，悬停/多选/已选时再强调，避免「凭空多一列」的突兀感 */
+  /* 默认折叠不占位，悬停/多选/已选时展开，避免非选择态左侧错位 */
   .card-nav-check {
     flex-shrink: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
+    width: 0;
     height: 29px;
-    opacity: 0.4;
-    transition: opacity 0.2s ease;
+    margin-right: 0;
+    opacity: 0;
+    overflow: hidden;
+    transition: width 0.2s ease, margin-right 0.2s ease, opacity 0.2s ease;
     cursor: pointer;
 
-    &.active,
-    &:focus-within {
+    &.active {
+      width: 22px;
+      margin-right: 8px;
       opacity: 1;
     }
 
@@ -3857,6 +3872,8 @@ async function createNewSession(value: string): Promise<void> {
 
   &:hover .card-nav-check,
   &.has-selection .card-nav-check {
+    width: 22px;
+    margin-right: 8px;
     opacity: 1;
   }
 
@@ -3896,7 +3913,7 @@ async function createNewSession(value: string): Promise<void> {
     flex-shrink: 0;
     display: flex;
     align-items: flex-start;
-    gap: 8px;
+    gap: 0;
     margin-bottom: 8px;
   }
 
@@ -3914,6 +3931,7 @@ async function createNewSession(value: string): Promise<void> {
     font-size: 15px;
     font-weight: 600;
     letter-spacing: 0.01em;
+    margin-right: 8px;
   }
 
   .more-wrap {

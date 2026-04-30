@@ -15,6 +15,11 @@ export default {
     clearMessagesFailed: 'Failed to clear messages, please try again later',
     batchManage: 'Batch Manage',
     newSession: 'New Chat',
+    pin: 'Pin',
+    unpin: 'Unpin',
+    pinned: 'Pinned',
+    pinFailed: 'Failed to pin, please try again later',
+    unpinFailed: 'Failed to unpin, please try again later',
     confirmLogout: 'Are you sure you want to logout?',
     systemInfo: 'System Information',
     knowledgeSearch: 'Search',
@@ -2206,6 +2211,13 @@ export default {
       copyUrlTitle: 'Copy API URL',
       urlCopySuccess: 'API URL copied to clipboard',
       copyTitle: 'Copy API Key',
+      resetTitle: 'Reset API Key',
+      resetConfirmTitle: 'Reset API Key?',
+      resetConfirmBody: 'After reset, the old API Key is revoked immediately. Every app, SDK, and script using the old key must switch to the new key to keep working. This action cannot be undone.',
+      resetConfirmOk: 'Reset',
+      resetConfirmCancel: 'Cancel',
+      resetSuccess: 'API Key reset; the new key is shown in the field above',
+      resetFailed: 'Failed to reset API Key',
       docLabel: 'API Documentation',
       docDescription: 'View complete API documentation and examples,',
       openDoc: 'Open documentation',
@@ -2316,6 +2328,7 @@ export default {
     tenant: {
       listFailed: 'Failed to list tenants',
       searchFailed: 'Failed to search tenants',
+      resetApiKeyFailed: 'Failed to reset API Key',
     },
     initialization: {
       checkFailed: 'Check failed',
@@ -2568,7 +2581,8 @@ export default {
     last7Days: 'Last 7 Days',
     last30Days: 'Last 30 Days',
     lastYear: 'Last Year',
-    earlier: 'Earlier'
+    earlier: 'Earlier',
+    pinned: 'Pinned',
   },
   upload: {
     uploadDocument: 'Upload Document',
@@ -2847,6 +2861,13 @@ export default {
   modelSettings: {
     title: 'Model Settings',
     description: 'Manage different types of AI models, including local Ollama and remote APIs',
+    typeShort: {
+      chat: 'Chat',
+      embedding: 'Embedding',
+      rerank: 'ReRank',
+      vllm: 'Vision',
+      asr: 'Speech',
+    },
     actions: {
       addModel: 'Add Model',
       setDefault: 'Set as Default'
@@ -3963,5 +3984,30 @@ export default {
     syncResultUpdated: '~{n}',
     syncResultDeleted: '-{n}',
     moreActions: 'More',
+  },
+  imOverview: {
+    menuTitle: 'Connected IMs',
+    pageTitle: 'Connected IMs',
+    subtitle: 'All IM channels connected to agents in this tenant — toggle state or jump to the owning agent',
+    totalCount: '{count} total',
+    empty: 'This tenant has no IM bots configured yet',
+    loadFailed: 'Failed to load IM bots',
+    builtinAgent: 'Built-in agent',
+    liveIndicator: 'IM channels are live',
+    detailsTitle: 'IM Bot Details',
+    gotoAgentEditor: 'Open in agent editor',
+    outputMode: 'Output mode',
+    sessionMode: 'Session mode',
+    updatedAt: 'Updated at',
+    channelId: 'Channel ID',
+    columns: {
+      platform: 'Platform',
+      name: 'Name',
+      agent: 'Agent',
+      mode: 'Mode',
+      enabled: 'Enabled',
+      botIdentity: 'Bot identity',
+      createdAt: 'Created at',
+    },
   },
 }
