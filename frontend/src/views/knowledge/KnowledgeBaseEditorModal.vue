@@ -87,6 +87,18 @@
                             </t-checkbox>
                             <p class="indexing-check-desc">{{ $t('knowledgeEditor.indexing.wikiDesc') }}</p>
                           </div>
+                          <div
+                            class="indexing-check-item"
+                            :class="{ 'is-checked': formData.indexingStrategy.graphEnabled, 'is-disabled': isIndexingLocked }"
+                            @click="toggleGraphIndexing"
+                          >
+                            <t-checkbox
+                              :checked="formData.indexingStrategy.graphEnabled"
+                              :disabled="isIndexingLocked"
+                              class="indexing-check-box"
+                            >{{ $t('knowledgeEditor.indexing.graphTitle') }}</t-checkbox>
+                            <p class="indexing-check-desc">{{ $t('knowledgeEditor.indexing.graphDesc') }}</p>
+                          </div>
                         </div>
                         <p v-if="isIndexingLocked" class="form-tip locked-tip">
                           {{ $t('knowledgeEditor.indexing.lockedTip') }}
@@ -695,6 +707,12 @@ const toggleWikiIndexing = () => {
   if (!formData.value) return
   if (isIndexingLocked.value) return
   formData.value.indexingStrategy.wikiEnabled = !formData.value.indexingStrategy.wikiEnabled
+}
+
+const toggleGraphIndexing = () => {
+  if (!formData.value) return
+  if (isIndexingLocked.value) return
+  formData.value.indexingStrategy.graphEnabled = !formData.value.indexingStrategy.graphEnabled
 }
 
 const handleChunkingConfigUpdate = (config: any) => {

@@ -1133,16 +1133,17 @@ func NewDuckDB() (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to open duckdb: %w", err)
 	}
 
-	// Try to install and load required extensions.
-	//   - spatial: used for st_read_meta() to enumerate layer (sheet) names from .xlsx/.xls
-	//   - excel:   used for read_xlsx() which gives proper type inference per sheet
-	bgCtx := context.Background()
+	// Install and load DuckDB extensions required for Excel data analysis.
+	//   - spatial: st_read_meta() to enumerate sheet names from .xlsx/.xls
+	//   - excel:   read_xlsx() for proper type inference per sheet
+	extCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 	for _, ext := range []string{"spatial", "excel"} {
-		if _, err := sqlDB.ExecContext(bgCtx, fmt.Sprintf("INSTALL %s;", ext)); err != nil {
-			logger.Warnf(bgCtx, "[DuckDB] Failed to install %s extension: %v", ext, err)
+		if _, err := sqlDB.ExecContext(extCtx, fmt.Sprintf("INSTALL %s;", ext)); err != nil {
+			logger.Warnf(context.Background(), "[DuckDB] Failed to install %s extension: %v", ext, err)
 		}
-		if _, err := sqlDB.ExecContext(bgCtx, fmt.Sprintf("LOAD %s;", ext)); err != nil {
-			logger.Warnf(bgCtx, "[DuckDB] Failed to load %s extension: %v", ext, err)
+		if _, err := sqlDB.ExecContext(extCtx, fmt.Sprintf("LOAD %s;", ext)); err != nil {
+			logger.Warnf(context.Background(), "[DuckDB] Failed to load %s extension: %v", ext, err)
 		}
 	}
 
