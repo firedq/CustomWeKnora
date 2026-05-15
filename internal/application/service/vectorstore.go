@@ -16,8 +16,8 @@ import (
 // vectorStoreService implements interfaces.VectorStoreService
 type vectorStoreService struct {
 	repo          interfaces.VectorStoreRepository
-	storeRegistry interfaces.StoreRegistry  // for dynamic registry updates on CRUD
-	factory       interfaces.EngineFactory  // creates engine services from VectorStore config
+	storeRegistry interfaces.StoreRegistry // for dynamic registry updates on CRUD
+	factory       interfaces.EngineFactory // creates engine services from VectorStore config
 }
 
 // NewVectorStoreService creates a new vector store service
@@ -178,9 +178,26 @@ func validateConnectionConfig(engineType types.RetrieverEngineType, config types
 		if config.Addr == "" {
 			return errors.NewValidationError("addr is required for milvus")
 		}
+	case types.TencentVectorDBRetrieverEngineType:
+		if config.Addr == "" {
+			return errors.NewValidationError("addr is required for tencent_vectordb")
+		}
+		if config.Username == "" {
+			return errors.NewValidationError("username is required for tencent_vectordb")
+		}
+		if config.APIKey == "" {
+			return errors.NewValidationError("api_key is required for tencent_vectordb")
+		}
 	case types.WeaviateRetrieverEngineType:
 		if config.Host == "" {
 			return errors.NewValidationError("host is required for weaviate")
+		}
+	case types.DorisRetrieverEngineType:
+		if config.Addr == "" {
+			return errors.NewValidationError("addr is required for doris (FE MySQL host:port)")
+		}
+		if config.Database == "" {
+			return errors.NewValidationError("database is required for doris")
 		}
 	case types.SQLiteRetrieverEngineType:
 		// No connection config needed for SQLite

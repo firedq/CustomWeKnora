@@ -62,8 +62,8 @@
         </t-form-item>
         <t-form-item :label="$t('organization.share.permission')" name="permission">
           <t-radio-group v-model="shareForm.permission">
-            <t-radio value="viewer">{{ $t('organization.share.permissionReadonly') }}</t-radio>
-            <t-radio value="editor">{{ $t('organization.share.permissionEditable') }}</t-radio>
+            <t-radio-button value="viewer">{{ $t('organization.share.permissionReadonly') }}</t-radio-button>
+            <t-radio-button value="editor">{{ $t('organization.share.permissionEditable') }}</t-radio-button>
           </t-radio-group>
         </t-form-item>
         <div class="permission-tip">
@@ -413,7 +413,7 @@ function handleGoToOrgSettings(orgId: string) {
   margin-bottom: 2px;
 
   .org-option-name {
-    font-family: "PingFang SC";
+    font-family: var(--app-font-family);
     font-size: 13px;
     font-weight: 500;
     color: var(--td-text-color-primary);
@@ -427,7 +427,7 @@ function handleGoToOrgSettings(orgId: string) {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-family: "PingFang SC";
+  font-family: var(--app-font-family);
   font-size: 12px;
   color: var(--td-text-color-placeholder);
 

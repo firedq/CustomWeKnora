@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	chatpipeline "github.com/Tencent/WeKnora/internal/application/service/chat_pipeline"
 	"github.com/Tencent/WeKnora/internal/assets"
 	"github.com/Tencent/WeKnora/internal/config"
@@ -102,6 +104,14 @@ type KBModelConfigRequest struct {
 		EnableParentChild bool                     `json:"enableParentChild"`
 		ParentChunkSize   int                      `json:"parentChunkSize,omitempty"`
 		ChildChunkSize    int                      `json:"childChunkSize,omitempty"`
+		// Strategy / TokenLimit / Languages use pointer types so the
+		// handler can distinguish "field absent in payload" (no change)
+		// from "field present with empty/zero value" (clear / disable).
+		// Without that distinction, users could set strategy="auto" once
+		// but never reset it back to legacy / unset.
+		Strategy   *string   `json:"strategy,omitempty"`
+		TokenLimit *int      `json:"tokenLimit,omitempty"`
+		Languages  *[]string `json:"languages,omitempty"`
 	} `json:"documentSplitting"`
 
 	// 多模态配置（仅模型相关；存储引擎在 storageProvider 中配置）
@@ -215,7 +225,7 @@ type InitializationRequest struct {
 // @Failure      404      {object}  errors.AppError         "知识库不存在"
 // @Security     Bearer
 // @Security     ApiKeyAuth
-// @Router       /initialization/kb/{kbId}/config [put]
+// @Router       /initialization/config/{kbId} [put]
 func (h *InitializationHandler) UpdateKBConfig(c *gin.Context) {
 	ctx := c.Request.Context()
 	kbIdStr := utils.SanitizeForLog(c.Param("kbId"))
@@ -242,7 +252,7 @@ func (h *InitializationHandler) UpdateKBConfig(c *gin.Context) {
 			kbIdStr, &types.Pagination{
 				Page:     1,
 				PageSize: 1,
-			}, "", "", "")
+			}, types.KnowledgeListFilter{})
 		if err == nil && knowledgeList != nil && knowledgeList.Total > 0 {
 			logger.Error(ctx, "Cannot change embedding model when files exist")
 			c.Error(errors.NewBadRequestError("知识库中已有文件，无法修改Embedding模型"))
@@ -320,6 +330,18 @@ func (h *InitializationHandler) UpdateKBConfig(c *gin.Context) {
 	if req.DocumentSplitting.ChildChunkSize > 0 {
 		kb.ChunkingConfig.ChildChunkSize = req.DocumentSplitting.ChildChunkSize
 	}
+	// Pointer-based fields support clearing (empty string / 0 / empty slice
+	// is a valid "user picked default again" signal; absent in payload means
+	// "no change").
+	if req.DocumentSplitting.Strategy != nil {
+		kb.ChunkingConfig.Strategy = *req.DocumentSplitting.Strategy
+	}
+	if req.DocumentSplitting.TokenLimit != nil {
+		kb.ChunkingConfig.TokenLimit = *req.DocumentSplitting.TokenLimit
+	}
+	if req.DocumentSplitting.Languages != nil {
+		kb.ChunkingConfig.Languages = *req.DocumentSplitting.Languages
+	}
 
 	// 更新多模态配置
 	if req.Multimodal.Enabled {
@@ -343,7 +365,7 @@ func (h *InitializationHandler) UpdateKBConfig(c *gin.Context) {
 	}
 	if oldProvider != provider {
 		knowledgeList, err := h.knowledgeService.ListPagedKnowledgeByKnowledgeBaseID(ctx,
-			kbIdStr, &types.Pagination{Page: 1, PageSize: 1}, "", "", "")
+			kbIdStr, &types.Pagination{Page: 1, PageSize: 1}, types.KnowledgeListFilter{})
 		if err == nil && knowledgeList != nil && knowledgeList.Total > 0 {
 			logger.Warn(ctx, "Storage engine changed with existing files, old files may become inaccessible")
 		}
@@ -415,12 +437,12 @@ func (h *InitializationHandler) UpdateKBConfig(c *gin.Context) {
 // @Accept       json
 // @Produce      json
 // @Param        kbId     path      string  true  "知识库ID"
-// @Param        request  body      object  true  "初始化请求"
+// @Param        request  body      handler.InitializationRequest  true  "初始化请求"
 // @Success      200      {object}  map[string]interface{}  "初始化成功"
 // @Failure      400      {object}  errors.AppError         "请求参数错误"
 // @Security     Bearer
 // @Security     ApiKeyAuth
-// @Router       /initialization/kb/{kbId} [post]
+// @Router       /initialization/initialize/{kbId} [post]
 func (h *InitializationHandler) InitializeByKB(c *gin.Context) {
 	ctx := c.Request.Context()
 	kbIdStr := utils.SanitizeForLog(c.Param("kbId"))
@@ -485,6 +507,13 @@ func (h *InitializationHandler) bindInitializationRequest(ctx context.Context, c
 func (h *InitializationHandler) getKnowledgeBaseForInitialization(ctx context.Context, kbIdStr string) (*types.KnowledgeBase, error) {
 	kb, err := h.kbService.GetKnowledgeBaseByID(ctx, kbIdStr)
 	if err != nil {
+		// The repo's not-found sentinel must surface as 404, not 500.
+		// Without this, every probe of a stale kb id from the
+		// initialization flow burns ops attention with a fake server
+		// error. See knowledgebase.go:validateAndGetKnowledgeBase.
+		if stderrors.Is(err, repository.ErrKnowledgeBaseNotFound) {
+			return nil, errors.NewNotFoundError("知识库不存在")
+		}
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{"kbId": utils.SanitizeForLog(kbIdStr)})
 		return nil, errors.NewInternalServerError("获取知识库信息失败: " + err.Error())
 	}
@@ -1076,7 +1105,7 @@ func (h *InitializationHandler) DownloadOllamaModel(c *gin.Context) {
 // @Failure      404     {object}  errors.AppError         "任务不存在"
 // @Security     Bearer
 // @Security     ApiKeyAuth
-// @Router       /initialization/ollama/download/{taskId} [get]
+// @Router       /initialization/ollama/download/progress/{taskId} [get]
 func (h *InitializationHandler) GetDownloadProgress(c *gin.Context) {
 	taskID := c.Param("taskId")
 
@@ -1273,7 +1302,7 @@ func (h *InitializationHandler) updateTaskStatus(
 // @Failure      404   {object}  errors.AppError         "知识库不存在"
 // @Security     Bearer
 // @Security     ApiKeyAuth
-// @Router       /initialization/kb/{kbId}/config [get]
+// @Router       /initialization/config/{kbId} [get]
 func (h *InitializationHandler) GetCurrentConfigByKB(c *gin.Context) {
 	ctx := c.Request.Context()
 	kbIdStr := utils.SanitizeForLog(c.Param("kbId"))
@@ -1283,6 +1312,12 @@ func (h *InitializationHandler) GetCurrentConfigByKB(c *gin.Context) {
 	// 获取指定知识库信息
 	kb, err := h.kbService.GetKnowledgeBaseByID(ctx, kbIdStr)
 	if err != nil {
+		// Mirror getKnowledgeBaseForInitialization above: missing /
+		// cross-tenant kb ids are 404, not 500.
+		if stderrors.Is(err, repository.ErrKnowledgeBaseNotFound) {
+			c.Error(errors.NewNotFoundError("知识库不存在"))
+			return
+		}
 		logger.Error(ctx, "Failed to get knowledge base", err)
 		c.Error(errors.NewInternalServerError("获取知识库信息失败: " + err.Error()))
 		return
@@ -1321,7 +1356,7 @@ func (h *InitializationHandler) GetCurrentConfigByKB(c *gin.Context) {
 		kbIdStr, &types.Pagination{
 			Page:     1,
 			PageSize: 1,
-		}, "", "", "")
+		}, types.KnowledgeListFilter{})
 	hasFiles := err == nil && knowledgeList != nil && knowledgeList.Total > 0
 
 	// 构建配置响应
@@ -1420,11 +1455,21 @@ func (h *InitializationHandler) buildConfigResponse(ctx context.Context, models 
 
 	// 添加知识库的文档分割配置
 	if kb != nil {
-		config["documentSplitting"] = map[string]interface{}{
+		ds := map[string]interface{}{
 			"chunkSize":    kb.ChunkingConfig.ChunkSize,
 			"chunkOverlap": kb.ChunkingConfig.ChunkOverlap,
 			"separators":   kb.ChunkingConfig.Separators,
 		}
+		if kb.ChunkingConfig.Strategy != "" {
+			ds["strategy"] = kb.ChunkingConfig.Strategy
+		}
+		if kb.ChunkingConfig.TokenLimit > 0 {
+			ds["tokenLimit"] = kb.ChunkingConfig.TokenLimit
+		}
+		if len(kb.ChunkingConfig.Languages) > 0 {
+			ds["languages"] = kb.ChunkingConfig.Languages
+		}
+		config["documentSplitting"] = ds
 
 		// 添加多模态的存储配置信息（优先读新字段，兼容旧 cos_config）
 		effectiveProvider := kb.GetStorageProvider()
@@ -1555,7 +1600,7 @@ func (h *InitializationHandler) resolveTenantWeKnoraCloudCreds(ctx context.Conte
 // @Failure      400      {object}  errors.AppError          "请求参数错误"
 // @Security     Bearer
 // @Security     ApiKeyAuth
-// @Router       /initialization/models/remote/check [post]
+// @Router       /initialization/remote/check [post]
 func (h *InitializationHandler) CheckRemoteModel(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -1606,12 +1651,12 @@ func (h *InitializationHandler) CheckRemoteModel(c *gin.Context) {
 // @Tags         初始化
 // @Accept       json
 // @Produce      json
-// @Param        request  body      object  true  "Embedding测试请求"
+// @Param        request  body      handler.ModelTestRequest  true  "Embedding测试请求"
 // @Success      200      {object}  map[string]interface{}  "测试结果"
 // @Failure      400      {object}  errors.AppError         "请求参数错误"
 // @Security     Bearer
 // @Security     ApiKeyAuth
-// @Router       /initialization/models/embedding/test [post]
+// @Router       /initialization/embedding/test [post]
 func (h *InitializationHandler) TestEmbeddingModel(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -1755,12 +1800,12 @@ func (h *InitializationHandler) checkRerankModelConnection(
 // @Tags         初始化
 // @Accept       json
 // @Produce      json
-// @Param        request  body      object  true  "Rerank检查请求"
+// @Param        request  body      handler.ModelTestRequest  true  "Rerank检查请求"
 // @Success      200      {object}  map[string]interface{}  "检查结果"
 // @Failure      400      {object}  errors.AppError         "请求参数错误"
 // @Security     Bearer
 // @Security     ApiKeyAuth
-// @Router       /initialization/models/rerank/check [post]
+// @Router       /initialization/rerank/check [post]
 func (h *InitializationHandler) CheckRerankModel(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -1812,12 +1857,12 @@ func (h *InitializationHandler) CheckRerankModel(c *gin.Context) {
 // @Tags         初始化
 // @Accept       json
 // @Produce      json
-// @Param        request  body      object  true  "ASR检查请求"
+// @Param        request  body      handler.ModelTestRequest  true  "ASR检查请求"
 // @Success      200      {object}  map[string]interface{}  "检查结果"
 // @Failure      400      {object}  errors.AppError         "请求参数错误"
 // @Security     Bearer
 // @Security     ApiKeyAuth
-// @Router       /initialization/models/asr/check [post]
+// @Router       /initialization/asr/check [post]
 func (h *InitializationHandler) CheckASRModel(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -2162,7 +2207,7 @@ type TextRelationExtractionResponse struct {
 // @Failure      400      {object}  errors.AppError                "请求参数错误"
 // @Security     Bearer
 // @Security     ApiKeyAuth
-// @Router       /initialization/extract/relations [post]
+// @Router       /initialization/extract/text-relation [post]
 func (h *InitializationHandler) ExtractTextRelations(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -2263,7 +2308,7 @@ type FabriTextResponse struct {
 // @Failure      400      {object}  errors.AppError         "请求参数错误"
 // @Security     Bearer
 // @Security     ApiKeyAuth
-// @Router       /initialization/fabri/text [post]
+// @Router       /initialization/extract/fabri-text [post]
 func (h *InitializationHandler) FabriText(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -2337,7 +2382,7 @@ var tagOptions = []string{
 // @Accept       json
 // @Produce      json
 // @Success      200  {object}  map[string]interface{}  "生成的标签"
-// @Router       /initialization/fabri/tag [get]
+// @Router       /initialization/extract/fabri-tag [post]
 func (h *InitializationHandler) FabriTag(c *gin.Context) {
 	tagRandom := RandomSelect(tagOptions, rand.Intn(len(tagOptions)-1)+1)
 	c.JSON(http.StatusOK, gin.H{

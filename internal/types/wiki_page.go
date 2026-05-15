@@ -158,6 +158,53 @@ type WikiConfig struct {
 	// ExtractionGranularity controls how many candidate slugs Pass 0 extracts
 	// per document. Empty / unknown value is treated as WikiExtractionStandard.
 	ExtractionGranularity WikiExtractionGranularity `yaml:"extraction_granularity" json:"extraction_granularity,omitempty"`
+
+	// IngestBatchSize controls how many pending ops a single batch
+	// processes before scheduling a follow-up. 0 falls back to the
+	// hard-coded default (5). Operators on large KBs (4w+ docs) can
+	// raise this to 10–20 to amortize the lock-acquire / index-rebuild
+	// overhead across more documents per round.
+	IngestBatchSize int `yaml:"ingest_batch_size" json:"ingest_batch_size,omitempty"`
+
+	// IngestMapParallel sets the errgroup limit for the Map phase
+	// (per-document extraction + summary + chunk citation). 0 falls
+	// back to 10. Bound by the LLM provider's concurrency limit and
+	// the worker's outbound HTTP pool.
+	IngestMapParallel int `yaml:"ingest_map_parallel" json:"ingest_map_parallel,omitempty"`
+
+	// IngestReduceParallel sets the errgroup limit for the Reduce phase
+	// (per-slug page write). 0 falls back to 10. Bound by the same
+	// LLM concurrency / HTTP pool considerations as the Map phase,
+	// plus DB connection pool size.
+	IngestReduceParallel int `yaml:"ingest_reduce_parallel" json:"ingest_reduce_parallel,omitempty"`
+}
+
+// IngestBatchSizeOrDefault returns IngestBatchSize when set (> 0),
+// otherwise the hard-coded fallback. Centralized so callers don't have
+// to repeat the 0-check.
+func (c *WikiConfig) IngestBatchSizeOrDefault(fallback int) int {
+	if c == nil || c.IngestBatchSize <= 0 {
+		return fallback
+	}
+	return c.IngestBatchSize
+}
+
+// IngestMapParallelOrDefault returns IngestMapParallel when set,
+// otherwise the hard-coded fallback.
+func (c *WikiConfig) IngestMapParallelOrDefault(fallback int) int {
+	if c == nil || c.IngestMapParallel <= 0 {
+		return fallback
+	}
+	return c.IngestMapParallel
+}
+
+// IngestReduceParallelOrDefault returns IngestReduceParallel when set,
+// otherwise the hard-coded fallback.
+func (c *WikiConfig) IngestReduceParallelOrDefault(fallback int) int {
+	if c == nil || c.IngestReduceParallel <= 0 {
+		return fallback
+	}
+	return c.IngestReduceParallel
 }
 
 // Value implements the driver.Valuer interface
@@ -198,10 +245,50 @@ type WikiPageListResponse struct {
 	TotalPages int         `json:"total_pages"`
 }
 
-// WikiGraphData represents the link graph structure for visualization
+// WikiGraphMode enumerates the graph query modes exposed to the API.
+const (
+	// WikiGraphModeOverview returns the top-N most-connected pages as an
+	// overview of the knowledge base. Intended for the first graph open.
+	WikiGraphModeOverview = "overview"
+	// WikiGraphModeEgo returns the neighborhood around a center page up to a
+	// configurable depth. Intended for drill-down interactions.
+	WikiGraphModeEgo = "ego"
+)
+
+// WikiGraphRequest is the service-layer input for graph queries. It is
+// populated by the HTTP handler from query params and passed down to the
+// service, which is responsible for enforcing mode-specific semantics.
+//
+// Limit policy: a non-positive `Limit` means "no cap" and is reserved for
+// internal callers (e.g. wiki lint) that need the full graph. The HTTP
+// handler always clamps `Limit` into a safe range before calling the
+// service so external traffic can never request an uncapped graph.
+type WikiGraphRequest struct {
+	KnowledgeBaseID string
+	Mode            string   // "overview" (default) | "ego"
+	Center          string   // ego mode center slug (required when Mode == "ego")
+	Depth           int      // ego mode BFS depth, >= 1
+	Types           []string // optional page_type filter; empty = no filter
+	Limit           int      // max nodes to return; <= 0 means uncapped
+}
+
+// WikiGraphData represents the link graph structure for visualization.
 type WikiGraphData struct {
 	Nodes []WikiGraphNode `json:"nodes"`
 	Edges []WikiGraphEdge `json:"edges"`
+	Meta  WikiGraphMeta   `json:"meta"`
+}
+
+// WikiGraphMeta describes how the returned subgraph relates to the full
+// knowledge base graph. The frontend uses `Truncated` to decide whether to
+// surface a "showing X of Y" hint and to enable ego-expansion UI.
+type WikiGraphMeta struct {
+	Mode      string `json:"mode"`
+	Total     int    `json:"total"`            // total node count in the KB before filtering/limit
+	Returned  int    `json:"returned"`         // number of nodes actually returned
+	Truncated bool   `json:"truncated"`        // true when Returned < Total (after filters)
+	Center    string `json:"center,omitempty"` // populated in ego mode
+	Depth     int    `json:"depth,omitempty"`  // populated in ego mode
 }
 
 // WikiGraphNode represents a node in the wiki link graph
@@ -252,3 +339,62 @@ type WikiPageIssue struct {
 func (WikiPageIssue) TableName() string {
 	return "wiki_page_issues"
 }
+
+// WikiIndexEntry is a single row in the structured wiki index response.
+// Only the columns needed to render a clickable directory entry are
+// carried — the backend projects SELECT slug, title, summary so a 40k-
+// page KB does not pay for TEXT content transport on every index open.
+type WikiIndexEntry struct {
+	Slug    string `json:"slug"`
+	Title   string `json:"title"`
+	Summary string `json:"summary"`
+}
+
+// WikiIndexGroup bundles the entries for one page_type into a page-sized
+// slice. `Total` is the full count across the KB for the type; `Items`
+// holds the current paginated window starting at `NextOffset - len(Items)`.
+// An empty NextCursor means the window is already at the end of the type.
+type WikiIndexGroup struct {
+	Type       string           `json:"type"`
+	Total      int64            `json:"total"`
+	Items      []WikiIndexEntry `json:"items"`
+	NextCursor string           `json:"next_cursor,omitempty"`
+}
+
+// WikiIndexResponse is what GET /wiki/index returns. The heavy directory
+// markdown that used to sit in wiki_pages.content is gone — only the LLM-
+// generated intro survives there. Everything else is assembled on demand
+// from the index repo's light-column projection, keeping index reads
+// O(page_size) regardless of KB size.
+type WikiIndexResponse struct {
+	Intro   string           `json:"intro"`
+	Version int              `json:"version"`
+	Groups  []WikiIndexGroup `json:"groups"`
+}
+
+// WikiPageLite is a slim projection of WikiPage carrying only the fields
+// the wiki ingest pipeline reaches for during Map / Reduce. It exists so
+// per-batch fetcher queries don't have to load the full multi-MB content
+// column for every page they want a title or out-link from.
+//
+// Use cases:
+//
+//   - SlugTitleFetcher: resolve slug -> title for log entries and
+//     cross-link injection.
+//   - cleanDeadLinks: read out_links + status without pulling content.
+//   - dedup pre-filter: title + aliases + page_type for the trgm /
+//     surface-similarity comparisons.
+//
+// Aliases is included because dedup and cross-link injection both treat
+// the alias surface forms as first-class match targets; OutLinks is
+// included so dead-link cleanup can determine which pages reference a
+// given dead slug without a second query.
+type WikiPageLite struct {
+	Slug     string      `json:"slug"`
+	Title    string      `json:"title"`
+	PageType string      `json:"page_type"`
+	Status   string      `json:"status"`
+	Aliases  StringArray `json:"aliases,omitempty"`
+	OutLinks StringArray `json:"out_links,omitempty"`
+}
+

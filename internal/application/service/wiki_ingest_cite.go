@@ -71,7 +71,8 @@ type citationPipelineOutcome struct {
 func (s *wikiIngestService) extractCandidateSlugs(
 	ctx context.Context,
 	chatModel chat.Chat,
-	content, docTitle, lang string,
+	kbID string,
+	content, lang string,
 	oldPageSlugs map[string]bool,
 	batchCtx *WikiBatchContext,
 ) ([]extractedItem, []extractedItem, map[string]extractedItem, error) {
@@ -92,7 +93,6 @@ func (s *wikiIngestService) extractCandidateSlugs(
 
 	granularity := batchCtx.ExtractionGranularity.Normalize()
 	raw, err := s.generateWithTemplate(ctx, chatModel, agent.WikiCandidateSlugPrompt, map[string]string{
-		"Title":               docTitle,
 		"Content":             content,
 		"Language":            lang,
 		"PreviousSlugs":       prevSlugsText,
@@ -112,7 +112,7 @@ func (s *wikiIngestService) extractCandidateSlugs(
 	}
 
 	result.Entities, result.Concepts = s.deduplicateExtractedBatch(
-		ctx, chatModel, result.Entities, result.Concepts, batchCtx.AllPages,
+		ctx, chatModel, kbID, result.Entities, result.Concepts,
 	)
 
 	slugItems := make(map[string]extractedItem, len(result.Entities)+len(result.Concepts))
@@ -277,7 +277,6 @@ func (s *wikiIngestService) classifyChunkCitations(
 	ctx context.Context,
 	chatModel chat.Chat,
 	candidatesXML string,
-	docTitle string,
 	chunks []*types.Chunk,
 	lang string,
 ) (map[string][]string, []newSlugFromCitation, int) {
@@ -301,7 +300,6 @@ func (s *wikiIngestService) classifyChunkCitations(
 		eg.Go(func() error {
 			chunksXML := renderChunksXML(batch)
 			raw, err := s.generateWithTemplate(ectx, chatModel, agent.WikiChunkCitationPrompt, map[string]string{
-				"DocTitle":       docTitle,
 				"CandidateSlugs": candidatesXML,
 				"ChunksXML":      chunksXML,
 				"Language":       lang,

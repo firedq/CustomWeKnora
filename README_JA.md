@@ -18,11 +18,17 @@
     <a href="https://chatbot.weixin.qq.com" target="_blank">
         <img alt="WeChat対話オープンプラットフォーム" src="https://img.shields.io/badge/WeChat対話オープンプラットフォーム-5ac725">
     </a>
+    <a href="https://chromewebstore.google.com/detail/jpemjbopikggjlmikmclgbmkhhopjdgd" target="_blank">
+        <img alt="Chrome 拡張機能" src="https://img.shields.io/badge/Chrome 拡張機能-WeKnora-4285F4">
+    </a>
+    <a href="https://clawhub.ai/lyingbug/weknora" target="_blank">
+        <img alt="ClawHub Skill" src="https://img.shields.io/badge/ClawHub Skill-WeKnora-ff6b35">
+    </a>
     <a href="https://github.com/Tencent/WeKnora/blob/main/LICENSE">
         <img src="https://img.shields.io/badge/License-MIT-ffffff?labelColor=d4eaf7&color=2e6cc4" alt="License">
     </a>
     <a href="./CHANGELOG.md">
-        <img alt="バージョン" src="https://img.shields.io/badge/version-0.5.0-2e6cc4?labelColor=d4eaf7">
+        <img alt="バージョン" src="https://img.shields.io/badge/version-0.5.2-2e6cc4?labelColor=d4eaf7">
     </a>
 </p>
 
@@ -50,16 +56,18 @@ Feishu、Notion、Yuqueなどの外部プラットフォームからのナレッ
 
 ## ✨ 最新アップデート
 
-**v0.5.0 バージョンのハイライト:**
+**v0.5.2 バージョンのハイライト:**
 
-- **Wiki モード**：Agent 主導の Wiki ナレッジシステムを新たに提供。生のドキュメントから相互リンクされた Markdown ページを自動的に整理・生成し、専用の Wiki ブラウザに加えて、ページ間の参照や関連性を可視化するインタラクティブなナレッジグラフを備え、構造化され継続的に進化するチーム専用ナレッジベースの構築を支援します。
-- **可観測性**：Langfuseを統合し、AgentのReActループ、LLMトークントラッキング、ツール呼び出し、asynqパイプラインを詳細に追跡。Agentの推論とシステムパフォーマンスを包括的に把握できます。
-- **カスタマイズ可能なインデックス戦略**：ユーザーはナレッジベースごとに、ベクトル検索、キーワード検索（ハイブリッド）、Wiki、およびナレッジグラフのインデックス付けを個別に有効化/無効化できるようになりました。
-- **ベクトルデータベースUIとナレッジベースのバインド**：接続テストを含むVector Store管理用の完全なフロントエンドUIが追加され、特定のナレッジベースに専用のベクトルデータベースインスタンスをバインドする機能がサポートされました。
-- **Yuque コネクタ**：APIクライアントを通じたYuqueデータソース統合。フルおよび増分同期をサポートし、Yuqueドキュメントのシームレスな取り込みを実現します。
-- **Agent機能の強化**：不正なJSON出力を自動的に修正および解析する`json_repair`ツールが追加され、`OpenMAIC Classroom`スキルがプリロードされ、DuckDBデータ分析でExcelのすべてのシートを読み込むサポートが強化されました。
-- **フロントエンドとデバッグの最適化**：設定のモデルカードにクイックコピー機能が追加され、すべてのモデルプロバイダーにおいてLLMリクエストのデバッグ（`llm_debug`）およびログ記録メカニズムが包括的に強化されました。
-- **バグ修正**：DuckDBのアクセス問題（ナレッジファイルを一時パスに実体化）の修正、Wiki専用AgentのRerankモデル要件の削除、およびdockerignore内のオフラインprotoc zipパッケージのホワイトリスト化。
+- **Wiki モードのスケール強化**：Wiki インジェストが汎用タスクキュー + デッドレターキューにより万件規模の KB に対応。ページリンクグラフはサブグラフ API + インタラクティブ探索 UI を追加。
+- **MCP ツールの Human-in-the-Loop 承認**：センシティブな MCP ツール呼び出しで Agent が一時停止し、チャット UI でユーザーの明示承認を待機。
+- **新規 LLM / ベクター DB / ストレージ / 検索**：Anthropic（Claude）、Apache Doris 4.1、Tencent VectorDB、金山雲 KS3、SearXNG をバックエンドとして追加。Vector Store 管理 UI と KB ごとのインデックス戦略 ON/OFF と組み合わせて利用可能。
+- **オブザーバビリティ強化**：Langfuse Span を retrieval / rerank / agent 各ステージに拡張；チャットストリームの両端で end-to-end TTFB を記録；LLM 呼び出しのフォールバックタイムアウトを強化し worker プールの恒久ブロックを防止。
+- **適応型 3 段階チャンキング**：見出しベース / ヒューリスティック / 再帰 の 3 戦略に自動振り分け、KB エディタにライブプレビューパネルを内蔵。詳細は [`docs/CHUNKING.md`](./docs/CHUNKING.md)。
+- **グローバルコマンドパレット**：⌘K パレットが独立検索ページを置き換え、結果から直接新規チャットを起動可能。
+- **データソースとモバイル**：Yuque コネクタ（フル + 増分同期）が Feishu / Notion と並んで利用可能、軽量な WeChat ミニプログラムクライアントを `miniprogram/` 配下に同梱。
+- **`weknora` CLI（プレビュー版）**：`cli/` 配下に公式コマンドラインクライアントの早期版を同梱、フィードバック歓迎。
+- **その他の改善**：テナント単位の RRF 調整；クエリ理解用の専用モデル；KB の一括管理；ユーザー単位のセッションピン留めとキーワード検索；テナント全体の IM チャネル概観；ユーザー単位で保存されるフォント / テーマ設定；OpenMaiC マイクロクラスルームの新規 Agent スキル；API ドキュメント / Swagger / Client SDK の全面リフレッシュ。
+- **バグ修正**：Embedder が接続失敗時に `(nil, nil)` を返して SIGSEGV に至る問題を修正；Mimo / DeepSeek 系プロバイダーの `reasoning_content` ラウンドトリップ復元；Agent 多ターン履歴を DB から再構築（添付ファイル replay 含む）；OIDC ログイン修正；Wiki インジェストの信頼性向上多数；空 PDF でファイル名から要約を捏造しないよう修正。
 
 <details>
 <summary><b>過去のリリース</b></summary>
@@ -225,19 +233,19 @@ Feishu、Notion、Yuqueなどの外部プラットフォームからのナレッ
 
 | 機能 | 詳細 |
 |------|------|
-| 大規模モデル | OpenAI / Azure OpenAI / DeepSeek / Qwen (Alibaba Cloud) / Zhipu / Hunyuan / Doubao (Volcengine) / Gemini / MiniMax / NVIDIA / Novita AI / SiliconFlow / OpenRouter / Ollama |
+| 大規模モデル | OpenAI / Azure OpenAI / Anthropic (Claude) / DeepSeek / Qwen (Alibaba Cloud) / Zhipu / Hunyuan / Doubao (Volcengine) / Gemini / MiniMax / NVIDIA / Novita AI / SiliconFlow / OpenRouter / Ollama |
 | Embedding | Ollama / BGE / GTE / OpenAI 互換 API |
-| ベクトル DB | PostgreSQL (pgvector) / Elasticsearch / Milvus / Weaviate / Qdrant |
-| オブジェクトストレージ | ローカル / MinIO / AWS S3 / 火山引擎 TOS / Alibaba Cloud OSS |
+| ベクトル DB | PostgreSQL (pgvector) / Elasticsearch / Milvus / Weaviate / Qdrant / Apache Doris / Tencent VectorDB |
+| オブジェクトストレージ | ローカル / MinIO / AWS S3 / 火山引擎 TOS / Alibaba Cloud OSS / 金山雲 KS3 |
 | IM 統合 | WeChat Work / Feishu / Slack / Telegram / DingTalk / Mattermost / WeChat |
-| Web 検索 | DuckDuckGo / Bing / Google / Tavily / Baidu / Ollama |
+| Web 検索 | DuckDuckGo / Bing / Google / Tavily / Baidu / Ollama / SearXNG |
 
 **プラットフォーム**
 
 | 機能 | 詳細 |
 |------|------|
 | デプロイ | ローカル / Docker / Kubernetes (Helm)、プライベート化・オフラインデプロイ対応 |
-| UI | Web UI / RESTful API / Chrome Extension |
+| UI | Web UI / RESTful API / CLI (`weknora`) / Chrome Extension / WeChat ミニプログラム |
 | 可観測性 | ReActループ、トークン消費、ツール呼び出し、パイプライン追跡のためのLangfuse統合 |
 | タスク管理 | MQ 非同期タスク、バージョンアップ時の DB 自動マイグレーション |
 | モデル管理 | 集中設定、ナレッジベース単位のモデル選択、マルチテナント組み込みモデル共有、WeKnora Cloud ホスティングモデルとドキュメント解析 |

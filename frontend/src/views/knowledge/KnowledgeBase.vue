@@ -307,22 +307,65 @@ let docSearchDebounce: ReturnType<typeof setTimeout> | null = null;
 const docSearchKeyword = ref('');
 const selectedFileType = ref('');
 const fileTypeOptions = computed(() => [
-  { content: t('knowledgeBase.allFileTypes'), value: '' },
-  { content: 'PDF', value: 'pdf' },
-  { content: 'DOCX', value: 'docx' },
-  { content: 'DOC', value: 'doc' },
-  { content: 'PPTX', value: 'pptx' },
-  { content: 'PPT', value: 'ppt' },
-  { content: 'TXT', value: 'txt' },
-  { content: 'MD', value: 'md' },
-  { content: 'URL', value: 'url' },
-  { content: t('knowledgeBase.typeManual'), value: 'manual' },
-  { content: 'MP3', value: 'mp3' },
-  { content: 'WAV', value: 'wav' },
-  { content: 'M4A', value: 'm4a' },
-  { content: 'FLAC', value: 'flac' },
-  { content: 'OGG', value: 'ogg' },
+  { label: t('knowledgeBase.allFileTypes'), value: '' },
+  { label: 'PDF', value: 'pdf' },
+  { label: 'DOCX', value: 'docx' },
+  { label: 'DOC', value: 'doc' },
+  { label: 'PPTX', value: 'pptx' },
+  { label: 'PPT', value: 'ppt' },
+  { label: 'TXT', value: 'txt' },
+  { label: 'MD', value: 'md' },
+  { label: 'URL', value: 'url' },
+  { label: t('knowledgeBase.typeManual'), value: 'manual' },
+  { label: 'MP3', value: 'mp3' },
+  { label: 'WAV', value: 'wav' },
+  { label: 'M4A', value: 'm4a' },
+  { label: 'FLAC', value: 'flac' },
+  { label: 'OGG', value: 'ogg' },
 ]);
+const selectedParseStatus = ref('');
+const parseStatusOptions = computed(() => [
+  { label: t('knowledgeBase.allParseStatuses'), value: '' },
+  { label: t('knowledgeBase.parseStatusPending'), value: 'pending' },
+  { label: t('knowledgeBase.parseStatusProcessing'), value: 'processing' },
+  { label: t('knowledgeBase.parseStatusCompleted'), value: 'completed' },
+  { label: t('knowledgeBase.parseStatusFailed'), value: 'failed' },
+]);
+const selectedSource = ref('');
+// Source filter combines ingestion channels and the "manual"/"url" virtual
+// sources that the backend routes onto the `type` column.
+const sourceOptions = computed(() => [
+  { label: t('knowledgeBase.allSources'), value: '' },
+  { label: t('knowledgeBase.sourceUpload'), value: 'web' },
+  { label: t('knowledgeBase.sourceUrl'), value: 'url' },
+  { label: t('knowledgeBase.sourceManual'), value: 'manual' },
+  { label: t('knowledgeBase.sourceApi'), value: 'api' },
+  { label: t('knowledgeBase.sourceBrowserExtension'), value: 'browser_extension' },
+  { label: t('knowledgeBase.channelFeishu'), value: 'feishu' },
+  { label: t('knowledgeBase.channelNotion'), value: 'notion' },
+  { label: t('knowledgeBase.channelYuque'), value: 'yuque' },
+  { label: t('knowledgeBase.channelWechat'), value: 'wechat' },
+  { label: t('knowledgeBase.channelWecom'), value: 'wecom' },
+  { label: t('knowledgeBase.channelDingtalk'), value: 'dingtalk' },
+  { label: t('knowledgeBase.channelSlack'), value: 'slack' },
+  { label: t('knowledgeBase.channelIm'), value: 'im' },
+]);
+// Date range as [start, end] in "YYYY-MM-DD" form (t-date-range-picker default).
+const updatedTimeRange = ref<string[]>([]);
+// Disable any date after today so users cannot filter into the future.
+const disableFutureDate = { after: new Date(new Date().setHours(23, 59, 59, 999)) };
+const filterParams = computed(() => {
+  const [start, end] = updatedTimeRange.value || [];
+  return {
+    tag_id: selectedTagId.value || undefined,
+    keyword: docSearchKeyword.value ? docSearchKeyword.value.trim() : undefined,
+    file_type: selectedFileType.value || undefined,
+    parse_status: selectedParseStatus.value || undefined,
+    source: selectedSource.value || undefined,
+    start_time: start ? `${start} 00:00:00` : undefined,
+    end_time: end ? `${end} 23:59:59` : undefined,
+  };
+});
 type TagInputInstance = ComponentPublicInstance<{ focus: () => void; select: () => void }>;
 const tagDropdownOptions = computed(() =>
   tagList.value.map((tag: any) => ({
@@ -419,9 +462,7 @@ const loadKnowledgeFiles = (kbIdValue: string): Promise<void> => {
     {
       page: 1,
       page_size: pageSize,
-      tag_id: selectedTagId.value || undefined,
-      keyword: docSearchKeyword.value ? docSearchKeyword.value.trim() : undefined,
-      file_type: selectedFileType.value || undefined,
+      ...filterParams.value,
     },
     kbIdValue,
   );
@@ -763,6 +804,14 @@ watch(selectedFileType, (newVal, oldVal) => {
   }
 });
 
+// 监听解析状态/来源/更新时间范围筛选变化（与文件类型行为一致）
+watch([selectedParseStatus, selectedSource, updatedTimeRange], () => {
+  if (kbId.value) {
+    page = 1;
+    loadKnowledgeFiles(kbId.value);
+  }
+}, { deep: true });
+
 // 监听文件上传事件
 const handleFileUploaded = (event: CustomEvent) => {
   const uploadedKbId = event.detail.kbId;
@@ -788,7 +837,12 @@ const handleOpenURLImportDialog = (event: CustomEvent) => {
   }
 };
 
-// Auto-open document detail when navigated with ?knowledge_id=xxx
+// Auto-open document detail when navigated with ?knowledge_id=xxx.
+// Note: this runs both when the KB page mounts with a query param AND when a
+// subsequent in-page navigation (e.g. from the global command palette) only
+// changes the query without re-mounting the component — in that case kbId is
+// the same and cardList may already be populated, so relying solely on the
+// cardList watcher misses the trigger.
 const pendingKnowledgeId = ref<string | null>(
   (route.query.knowledge_id as string) || null
 );
@@ -807,6 +861,29 @@ const tryAutoOpenDocument = () => {
   }
 };
 
+// React to later ?knowledge_id= changes on the same KB route (no remount).
+watch(
+  () => route.query.knowledge_id,
+  (newId) => {
+    if (typeof newId !== 'string' || !newId) return;
+    pendingKnowledgeId.value = newId;
+    // cardList is almost always already loaded at this point; if not, the
+    // cardList watcher below will pick it up.
+    tryAutoOpenDocument();
+  },
+);
+
+// Dispatched by the global command palette when the user picks a chunk that
+// lives in the KB they are already viewing — vue-router dedupes identical
+// navigations, so we rely on this event instead of a URL change.
+const handleOpenKnowledgeEvent = (e: Event) => {
+  const detail = (e as CustomEvent<{ kbId: string; knowledgeId: string }>).detail;
+  if (!detail || !detail.knowledgeId) return;
+  if (detail.kbId && detail.kbId !== kbId.value) return;
+  pendingKnowledgeId.value = detail.knowledgeId;
+  tryAutoOpenDocument();
+};
+
 onMounted(() => {
   loadKnowledgeBaseInfo(kbId.value);
   loadKnowledgeList();
@@ -818,11 +895,13 @@ onMounted(() => {
 
   window.addEventListener('knowledgeFileUploaded', handleFileUploaded as EventListener);
   window.addEventListener('openURLImportDialog', handleOpenURLImportDialog as EventListener);
+  window.addEventListener('weknora:open-knowledge', handleOpenKnowledgeEvent as EventListener);
 });
 
 onUnmounted(() => {
   window.removeEventListener('knowledgeFileUploaded', handleFileUploaded as EventListener);
   window.removeEventListener('openURLImportDialog', handleOpenURLImportDialog as EventListener);
+  window.removeEventListener('weknora:open-knowledge', handleOpenKnowledgeEvent as EventListener);
   stopMovePoll();
   if (timeout !== null) {
     clearTimeout(timeout);
@@ -1595,7 +1674,7 @@ const handleScroll = () => {
     if (scrollTop + clientHeight >= scrollHeight) {
       page++;
       if (cardList.value.length < total.value && page <= pageNum) {
-        getKnowled({ page, page_size: pageSize, tag_id: selectedTagId.value, keyword: docSearchKeyword.value ? docSearchKeyword.value.trim() : undefined, file_type: selectedFileType.value || undefined });
+        getKnowled({ page, page_size: pageSize, ...filterParams.value });
       }
     }
   }
@@ -1650,6 +1729,42 @@ const clearSelection = () => {
   lastSelectedIndex = -1;
 };
 
+// Batch (multi-select) mode mirrors the session list's "批量管理" UX: while off,
+// no checkbox is rendered so the title doesn't jitter on hover; while on,
+// checkboxes are persistent and clicking a card toggles its selection.
+const batchMode = ref(false);
+const toggleBatchMode = () => {
+  batchMode.value = !batchMode.value;
+  if (!batchMode.value) clearSelection();
+};
+// "取消选择" / 退出批量管理：清空选择，并退出 grid 视图下的批量模式。
+const handleBatchCancel = () => {
+  clearSelection();
+  batchMode.value = false;
+};
+// 切到卡片视图时，如果列表视图里已经勾选过文档，需要自动开启批量管理模式，
+// 否则卡片视图默认不渲染 checkbox，会看不到勾选态。
+watch(viewMode, (mode) => {
+  if (mode === 'grid' && selectedIds.value.size > 0) {
+    batchMode.value = true;
+  }
+});
+// Triggered from a card / row "..." menu — match the session-list UX where
+// the menu item simply opens batch mode (no auto-selection).
+const handleEnterBatchFromCard = (item: any) => {
+  if (item) item.isMore = false;
+  moreIndex.value = -1;
+  clearSelection();
+  batchMode.value = true;
+};
+const onCardClick = (item: any) => {
+  if (batchMode.value) {
+    onCardGridCheckboxChange(item.id, !selectedIds.value.has(item.id));
+  } else {
+    openCardDetails(item);
+  }
+};
+
 const openBatchDeleteDialog = () => {
   if (selectedIds.value.size === 0) return;
   batchDeleteDialog.value = true;
@@ -1665,6 +1780,7 @@ const confirmBatchDelete = async () => {
     if (res?.success) {
       MessagePlugin.success(t('knowledgeBase.batchDeleteSuccess', { count: ids.length }));
       clearSelection();
+      batchMode.value = false;
       batchDeleteDialog.value = false;
       page = 1;
       // 后端将批量删除放入异步队列，立刻拉列表仍可能包含待删项；短轮询直到列表与后端一致或超时
@@ -1700,9 +1816,12 @@ const handleListAction = (
 };
 
 // Clear selection on filter/tag/kb change to avoid acting on hidden items.
-watch([selectedTagId, docSearchKeyword, selectedFileType, kbId], () => {
-  clearSelection();
-});
+watch(
+  [selectedTagId, docSearchKeyword, selectedFileType, selectedParseStatus, selectedSource, updatedTimeRange, kbId],
+  () => {
+    clearSelection();
+  },
+);
 
 // After cardList reloads: stable keys rely on correct indices for shift-range; clamp anchor index.
 watch(cardList, () => {
@@ -1824,15 +1943,17 @@ async function createNewSession(value: string): Promise<void> {
                   </t-tooltip>
                 </span>
                 <span class="breadcrumb-tab-sep">/</span>
-                <span
-                  :class="['breadcrumb-tab', { active: activeKbTab === 'graph', indexing: wikiIsIndexing }]"
-                  @click="activeKbTab = 'graph'"
-                >
-                  {{ $t('knowledgeEditor.wikiBrowser.tabGraph') }}
-                  <t-tooltip v-if="wikiIsIndexing" :content="wikiIndexingTip" placement="bottom">
-                    <t-loading size="small" class="breadcrumb-tab-indicator" />
-                  </t-tooltip>
-                </span>
+                <t-tooltip :content="$t('knowledgeEditor.wikiBrowser.tabGraphTip')" placement="bottom">
+                  <span
+                    :class="['breadcrumb-tab', { active: activeKbTab === 'graph', indexing: wikiIsIndexing }]"
+                    @click="activeKbTab = 'graph'"
+                  >
+                    {{ $t('knowledgeEditor.wikiBrowser.tabGraph') }}
+                    <t-tooltip v-if="wikiIsIndexing" :content="wikiIndexingTip" placement="bottom">
+                      <t-loading size="small" class="breadcrumb-tab-indicator" />
+                    </t-tooltip>
+                  </span>
+                </t-tooltip>
               </template>
               <span v-else class="breadcrumb-current">{{ $t('knowledgeEditor.document.title') }}</span>
             </h2>
@@ -2100,6 +2221,28 @@ async function createNewSession(value: string): Promise<void> {
                 class="doc-type-select"
                 clearable
               />
+              <t-select
+                v-model="selectedParseStatus"
+                :options="parseStatusOptions"
+                :placeholder="$t('knowledgeBase.parseStatusFilter')"
+                class="doc-type-select"
+                clearable
+              />
+              <t-select
+                v-model="selectedSource"
+                :options="sourceOptions"
+                :placeholder="$t('knowledgeBase.sourceFilter')"
+                class="doc-type-select"
+                clearable
+              />
+              <t-date-range-picker
+                v-model="updatedTimeRange"
+                :placeholder="[$t('knowledgeBase.updatedTimeFrom'), $t('knowledgeBase.updatedTimeTo')]"
+                :disable-date="disableFutureDate"
+                class="doc-date-range"
+                clearable
+                allow-input
+              />
               <div class="doc-view-toggle" role="group" :aria-label="$t('knowledgeBase.viewModeToggle')">
                 <t-tooltip :content="$t('knowledgeBase.viewModeGrid')" placement="top">
                   <button
@@ -2164,10 +2307,10 @@ async function createNewSession(value: string): Promise<void> {
                   <!-- 现有文档卡片 -->
                   <div
                     class="knowledge-card"
-                    :class="{ 'is-selected': selectedIds.has(item.id), 'has-selection': selectedIds.size > 0 }"
+                    :class="{ 'is-selected': selectedIds.has(item.id), 'batch-mode': batchMode }"
                     v-for="(item, index) in cardList"
                     :key="item.id"
-                    @click="openCardDetails(item)"
+                    @click="onCardClick(item)"
                     @mouseenter="onCardMouseEnter($event, item)"
                     @mousemove="onCardMouseMove($event)"
                     @mouseleave="onCardMouseLeave"
@@ -2175,9 +2318,8 @@ async function createNewSession(value: string): Promise<void> {
                     <div class="card-content">
                       <div class="card-content-nav">
                         <div
-                          v-if="canEdit"
+                          v-if="canEdit && batchMode"
                           class="card-nav-check"
-                          :class="{ active: selectedIds.has(item.id) }"
                           @click.stop
                         >
                           <t-checkbox
@@ -2224,6 +2366,10 @@ async function createNewSession(value: string): Promise<void> {
                               <div class="card-menu-item" @click.stop="handleMoveKnowledge(item)">
                                 <t-icon class="icon" name="swap" />
                                 <span>{{ t('knowledgeBase.moveDocument') }}</span>
+                              </div>
+                              <div class="card-menu-item" @click.stop="handleEnterBatchFromCard(item)">
+                                <t-icon class="icon" name="queue" />
+                                <span>{{ t('menu.batchManage') }}</span>
                               </div>
                               <div class="card-menu-item danger" @click.stop="delCard(index, item)">
                                 <t-icon class="icon" name="delete" />
@@ -2412,11 +2558,12 @@ async function createNewSession(value: string): Promise<void> {
                 </div>
               </template>
             </div>
-            <div class="doc-batch-bar-anchor" v-show="selectedIds.size > 0">
+            <div class="doc-batch-bar-anchor" v-show="batchMode || selectedIds.size > 0">
               <DocumentBatchBar
                 :count="selectedIds.size"
                 :loading="batchDeleting"
-                @clear="clearSelection"
+                :visible="batchMode || selectedIds.size > 0"
+                @cancel="handleBatchCancel"
                 @delete="openBatchDeleteDialog"
               />
             </div>
@@ -2747,7 +2894,7 @@ async function createNewSession(value: string): Promise<void> {
       color: var(--td-text-color-primary);
       cursor: pointer;
       transition: all 0.2s ease;
-      font-family: "PingFang SC", -apple-system, BlinkMacSystemFont, sans-serif;
+      font-family: var(--app-font-family);
       font-size: 13px;
       -webkit-font-smoothing: antialiased;
 
@@ -2770,7 +2917,7 @@ async function createNewSession(value: string): Promise<void> {
         }
 
         .tag-hash-icon {
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+          font-family: var(--app-font-family-mono);
           font-size: 16px;
           font-weight: 500;
           width: 16px;
@@ -2785,7 +2932,7 @@ async function createNewSession(value: string): Promise<void> {
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        font-family: "PingFang SC", -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: var(--app-font-family);
         font-size: 13px;
         font-weight: 400;
         line-height: 1.4;
@@ -2979,7 +3126,7 @@ async function createNewSession(value: string): Promise<void> {
   cursor: pointer;
   transition: all 0.2s ease;
   color: var(--td-text-color-primary);
-  font-family: 'PingFang SC';
+  font-family: var(--app-font-family);
   font-size: 14px;
   font-weight: 400;
 
@@ -3033,15 +3180,28 @@ async function createNewSession(value: string): Promise<void> {
   display: flex;
   gap: 12px;
   align-items: center;
+  flex-wrap: wrap;
 
   .doc-search-input {
-    flex: 1;
-    min-width: 0;
+    flex: 1 1 220px;
+    min-width: 220px;
   }
 
   .doc-type-select {
     width: 140px;
     flex-shrink: 0;
+  }
+
+  .doc-date-range {
+    width: 280px;
+    flex-shrink: 0;
+
+    // TDesign focuses both the outer popup reference and inner inputs, which
+    // visually stacks into a "double border" — drop the inner shadow.
+    :deep(.t-input--focused),
+    :deep(.t-is-focused) {
+      box-shadow: none;
+    }
   }
 
   .doc-view-toggle {
@@ -3267,7 +3427,7 @@ async function createNewSession(value: string): Promise<void> {
   h2 {
     margin: 0;
     color: var(--td-text-color-primary);
-    font-family: "PingFang SC";
+    font-family: var(--app-font-family);
     font-size: 24px;
     font-weight: 600;
     line-height: 32px;
@@ -3276,7 +3436,7 @@ async function createNewSession(value: string): Promise<void> {
   .document-subtitle {
     margin: 0;
     color: var(--td-text-color-placeholder);
-    font-family: "PingFang SC";
+    font-family: var(--app-font-family);
     font-size: 14px;
     font-weight: 400;
     line-height: 20px;
@@ -3571,7 +3731,7 @@ async function createNewSession(value: string): Promise<void> {
 
   .circle-title {
     color: var(--td-text-color-primary);
-    font-family: "PingFang SC";
+    font-family: var(--app-font-family);
     font-size: 16px;
     font-weight: 600;
     line-height: 24px;
@@ -3579,7 +3739,7 @@ async function createNewSession(value: string): Promise<void> {
 
   .del-circle-txt {
     color: var(--td-text-color-placeholder);
-    font-family: "PingFang SC";
+    font-family: var(--app-font-family);
     font-size: 14px;
     font-weight: 400;
     line-height: 22px;
@@ -3597,7 +3757,7 @@ async function createNewSession(value: string): Promise<void> {
 
   .circle-btn-txt {
     color: var(--td-text-color-primary);
-    font-family: "PingFang SC";
+    font-family: var(--app-font-family);
     font-size: 14px;
     font-weight: 400;
     line-height: 22px;
@@ -3824,25 +3984,16 @@ async function createNewSession(value: string): Promise<void> {
   cursor: pointer;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
 
-  /* 默认折叠不占位，悬停/多选/已选时展开，避免非选择态左侧错位 */
+  /* 仅在批量管理模式下渲染 checkbox，常态下不占位，避免标题在 hover 时右滑 */
   .card-nav-check {
     flex-shrink: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 0;
+    width: 22px;
     height: 29px;
-    margin-right: 0;
-    opacity: 0;
-    overflow: hidden;
-    transition: width 0.2s ease, margin-right 0.2s ease, opacity 0.2s ease;
+    margin-right: 8px;
     cursor: pointer;
-
-    &.active {
-      width: 22px;
-      margin-right: 8px;
-      opacity: 1;
-    }
 
     .card-select-checkbox {
       margin: 0;
@@ -3870,13 +4021,6 @@ async function createNewSession(value: string): Promise<void> {
     }
   }
 
-  &:hover .card-nav-check,
-  &.has-selection .card-nav-check {
-    width: 22px;
-    margin-right: 8px;
-    opacity: 1;
-  }
-
   .card-content {
     flex: 1;
     min-height: 0;
@@ -3900,7 +4044,7 @@ async function createNewSession(value: string): Promise<void> {
 
   .card-analyze-txt {
     color: var(--td-brand-color);
-    font-family: "PingFang SC";
+    font-family: var(--app-font-family);
     font-size: 11px;
     margin-left: 8px;
   }
@@ -3927,7 +4071,7 @@ async function createNewSession(value: string): Promise<void> {
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--td-text-color-primary);
-    font-family: "PingFang SC", -apple-system, sans-serif;
+    font-family: var(--app-font-family);
     font-size: 15px;
     font-weight: 600;
     letter-spacing: 0.01em;
@@ -3967,7 +4111,7 @@ async function createNewSession(value: string): Promise<void> {
     line-clamp: 2;
     overflow: hidden;
     color: var(--td-text-color-secondary);
-    font-family: "PingFang SC";
+    font-family: var(--app-font-family);
     font-size: 12px;
     font-weight: 400;
     line-height: 19px;
@@ -3989,14 +4133,14 @@ async function createNewSession(value: string): Promise<void> {
 
   .card-time {
     color: var(--td-text-color-secondary);
-    font-family: "PingFang SC";
+    font-family: var(--app-font-family);
     font-size: 12px;
     font-weight: 400;
   }
 
   .card-type {
     color: var(--td-text-color-placeholder);
-    font-family: "PingFang SC";
+    font-family: var(--app-font-family);
     font-size: 11px;
     font-weight: 500;
     padding: 0;
@@ -4022,7 +4166,7 @@ async function createNewSession(value: string): Promise<void> {
   border: 1px solid var(--td-component-stroke);
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  font-family: "PingFang SC", -apple-system, sans-serif;
+  font-family: var(--app-font-family);
   transition: opacity 0.15s ease;
 
   .card-popover-title {
@@ -4166,7 +4310,7 @@ async function createNewSession(value: string): Promise<void> {
 
 .knowledge-card-upload {
   color: var(--td-text-color-primary);
-  font-family: "PingFang SC";
+  font-family: var(--app-font-family);
   font-size: 14px;
   font-weight: 400;
   cursor: pointer;
@@ -4189,7 +4333,7 @@ async function createNewSession(value: string): Promise<void> {
 
 .upload-described {
   color: var(--td-text-color-disabled);
-  font-family: "PingFang SC";
+  font-family: var(--app-font-family);
   font-size: 12px;
   font-weight: 400;
   text-align: center;

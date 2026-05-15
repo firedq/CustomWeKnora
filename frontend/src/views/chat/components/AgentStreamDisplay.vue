@@ -70,6 +70,22 @@
                 </div>
               </div>
 
+              <!-- MCP tool human approval (issue #1173) -->
+              <div v-else-if="event.type === 'tool_approval_required'" class="tool-event">
+                <ToolApprovalCard
+                  :pending-id="event.pending_id"
+                  :service-name="event.service_name || ''"
+                  :mcp-tool-name="event.mcp_tool_name || ''"
+                  :description="event.description"
+                  :args-json="event.args_json"
+                  :timeout-seconds="event.timeout_seconds"
+                  :requested-at="event.requested_at"
+                  :resolved="event.resolved"
+                  :approved="event.approved"
+                  :resolve-reason="event.resolve_reason"
+                />
+              </div>
+
               <!-- Tool Call Event (non-thinking) -->
               <div v-else-if="event.type === 'tool_call'" class="tool-event">
                 <div
@@ -179,6 +195,22 @@
           </div>
         </div>
 
+        <!-- MCP tool human approval -->
+        <div v-else-if="event.type === 'tool_approval_required'" class="tool-event">
+          <ToolApprovalCard
+            :pending-id="event.pending_id"
+            :service-name="event.service_name || ''"
+            :mcp-tool-name="event.mcp_tool_name || ''"
+            :description="event.description"
+            :args-json="event.args_json"
+            :timeout-seconds="event.timeout_seconds"
+            :requested-at="event.requested_at"
+            :resolved="event.resolved"
+            :approved="event.approved"
+            :resolve-reason="event.resolve_reason"
+          />
+        </div>
+
         <!-- Thinking Tool Call -->
         <div v-else-if="event.type === 'tool_call' && event.tool_name === 'thinking'" class="tool-event">
           <div class="action-card" :class="{ 'action-pending': event.pending || isThinkingActive(event.tool_call_id) }">
@@ -207,7 +239,7 @@
             v-if="event.content && event.content.trim()"
             class="answer-content markdown-content"
           >
-               <div v-html="renderMarkdownContent(event.content)"></div>
+               <div v-html="renderAnswerContent(event.content)"></div>
           </div>
           <div v-if="event.done && event.content && event.content.trim()" class="answer-toolbar">
             <t-button size="small" variant="outline" shape="round" @click.stop="handleCopyAnswer(event)" :title="$t('agent.copy')">
@@ -375,6 +407,7 @@ import markedKatex from 'marked-katex-extension';
 import 'katex/dist/katex.min.css';
 import DOMPurify from 'dompurify';
 import ToolResultRenderer from './ToolResultRenderer.vue';
+import ToolApprovalCard from './ToolApprovalCard.vue';
 import picturePreview from '@/components/picture-preview.vue';
 import { getChunkByIdOnly } from '@/api/knowledge-base';
 import { getWikiPage, type WikiPage } from '@/api/wiki';
@@ -385,6 +418,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useI18n } from 'vue-i18n';
 import i18n from '@/i18n';
 import { hydrateProtectedFileImages } from '@/utils/security';
+import { unwrapFinalAnswerWrappers, thinkingEqualsAnswer } from '@/utils/finalAnswer';
 import {
   buildManualMarkdown,
   copyTextToClipboard,
@@ -736,7 +770,7 @@ const props = defineProps<{
 
 // Configure marked for security
 marked.use({});
-marked.use(markedKatex({ throwOnError: false }));
+marked.use(markedKatex({ throwOnError: false, nonStandard: true }));
 
 const preprocessMathDelimiters = (rawText: string): string => {
   if (!rawText || typeof rawText !== 'string') {
@@ -863,6 +897,12 @@ const isConversationDone = computed(() => {
   const stopEvent = stream.find((e: any) => e.type === 'stop');
   if (stopEvent) {
     console.log('[Collapse] Found stop event, conversation done');
+    return true;
+  }
+
+  const completeEvent = stream.find((e: any) => e.type === 'agent_complete');
+  if (completeEvent) {
+    console.log('[Collapse] Found complete event, conversation done');
     return true;
   }
   
@@ -1050,15 +1090,78 @@ const buildFullEventList = (stream: any[]) => {
 
     result.push(event);
   }
-  return result;
+
+  // Drop thinking events whose content is whitespace-only. Some models emit
+  // "\n\n" before a tool call (see e.g. qwen3 emitting blank lines between
+  // [assistant] and tool_calls), which the backend faithfully forwards as
+  // thought_chunk events. Without this filter the tree shows an empty
+  // "思考" card with no text — confusing to the user.
+  return result.filter((e: any) => {
+    if (e.type !== 'thinking') return true;
+    const content = typeof e.content === 'string' ? e.content : '';
+    return content.trim().length > 0;
+  });
 };
+
+// IDs of thinking events that should NOT be rendered in the intermediate-
+// steps tree because their content is already shown as the final answer.
+// Two cases produce duplicates:
+//   1. `promotedThinkingEventId` — agent loop ended via natural-stop with
+//      no answer event at all; we promote the trailing thinking into a
+//      virtual answer card (see displayEvents) and must hide the source
+//      thinking from the tree.
+//   2. Natural-stop path on the backend streams answer chunks as thought
+//      events first, then re-emits the *same* content as one big answer
+//      event. The merged thinking event in the tree would duplicate the
+//      answer card, so detect content-equivalence and hide it.
+const hiddenThinkingEventIds = computed<Set<string>>(() => {
+  const hidden = new Set<string>();
+  const stream = eventStream.value;
+  if (!stream || !Array.isArray(stream)) return hidden;
+
+  // Case 1: trailing thinking promoted to answer (no answer events present).
+  const final = finalContent.value;
+  if (final && final.type === 'thinking') {
+    const hasRealAnswer = stream.some(
+      (e: any) => e.type === 'answer' && e.content && e.content.trim()
+    );
+    if (!hasRealAnswer && final.event_id) {
+      hidden.add(final.event_id);
+    }
+  }
+
+  // Case 2: natural-stop duplicates — answer events carry the same content
+  // already streamed as thinking chunks. Compare merged thinking events
+  // against the concatenated answer content and hide on match.
+  const answerContent = stream
+    .filter((e: any) => e.type === 'answer' && e.content)
+    .map((e: any) => e.content)
+    .join('');
+  if (answerContent.trim()) {
+    const merged = buildFullEventList(stream);
+    for (const e of merged) {
+      if (e.type !== 'thinking' || !e.event_id || !e.content) continue;
+      if (hidden.has(e.event_id)) continue;
+      if (thinkingEqualsAnswer(e.content, answerContent)) {
+        hidden.add(e.event_id);
+      }
+    }
+  }
+
+  return hidden;
+});
 
 // Intermediate events (tree children: everything except answer)
 const intermediateEvents = computed(() => {
   const stream = eventStream.value;
   if (!stream || !Array.isArray(stream)) return [];
   const result = buildFullEventList(stream);
-  return result.filter((e: any) => e.type !== 'answer' && e.type !== 'agent_complete');
+  const hidden = hiddenThinkingEventIds.value;
+  return result.filter((e: any) => {
+    if (e.type === 'answer' || e.type === 'agent_complete') return false;
+    if (e.type === 'thinking' && e.event_id && hidden.has(e.event_id)) return false;
+    return true;
+  });
 });
 
 // Events to display (non-tree: before answer starts show all, after answer starts show only answer)
@@ -1099,14 +1202,23 @@ const displayEvents = computed(() => {
   }
 
   if (final.type === 'thinking') {
-    const thinkingFiltered = result.filter((e: any) =>
+    // The agent loop ended via natural-stop (the model wrote its answer as
+    // free text instead of calling final_answer). Synthesize a virtual
+    // `answer` event from the trailing thinking content so it renders with
+    // the answer card UI (expanded markdown + copy/add toolbar) rather than
+    // the collapsed "思考" card. The original thinking event is still in
+    // the intermediate-steps tree when applicable.
+    const thinking = result.find((e: any) =>
       e.type === 'thinking' && e.event_id === final.event_id
     );
-    if (final.showAnswerToolbar) {
-      const answerDoneEvents = result.filter((e: any) => e.type === 'answer' && e.done === true);
-      return [...thinkingFiltered, ...answerDoneEvents];
-    }
-    return thinkingFiltered;
+    if (!thinking || !thinking.content) return result;
+    return [{
+      type: 'answer',
+      event_id: thinking.event_id,
+      content: thinking.content,
+      done: true,
+      _promoted_from_thinking: true,
+    }];
   }
 
   return result;
@@ -1117,6 +1229,9 @@ const getEventKey = (event: any, index: number): string => {
   if (!event) return `event-${index}`;
   if (event.event_id) return `event-${event.event_id}`;
   if (event.tool_call_id) return `tool-${event.tool_call_id}`;
+  if (event.type === 'tool_approval_required' && event.pending_id) {
+    return `approval-${event.pending_id}`;
+  }
   return `event-${index}-${event.type || 'unknown'}`;
 };
 
@@ -1678,6 +1793,28 @@ const preprocessMarkdown = (contentStr: string): string => {
     );
 };
 
+const HTML_PLACEHOLDER_RE = /@@WEKNORA_HTML_PLACEHOLDER_(\d+)@@/g;
+
+const extractRenderableHtmlPlaceholders = (contentStr: string): { content: string; htmlSnippets: string[] } => {
+  const htmlSnippets: string[] = [];
+  const storeHtml = (html: string): string => {
+    const idx = htmlSnippets.length;
+    htmlSnippets.push(html);
+    return `@@WEKNORA_HTML_PLACEHOLDER_${idx}@@`;
+  };
+
+  const content = contentStr
+    .replace(/<(?:kb|web)\b[^>]*\/>/g, (match) => storeHtml(preprocessMarkdown(match)))
+    .replace(/\[\[([^\]]+)\]\]/g, (match) => storeHtml(preprocessMarkdown(match)));
+
+  return { content, htmlSnippets };
+};
+
+const restoreRenderableHtmlPlaceholders = (html: string, htmlSnippets: string[]): string => {
+  if (!htmlSnippets.length) return html;
+  return html.replace(HTML_PLACEHOLDER_RE, (_match, idx) => htmlSnippets[Number(idx)] || '');
+};
+
 // 自定义渲染器 - 支持 Mermaid
 const agentRenderer = new marked.Renderer();
 agentRenderer.code = createMermaidCodeRenderer('mermaid-agent');
@@ -1724,10 +1861,22 @@ const renderMarkdownContent = (content: any): string => {
   // Restore preserved tags
   sanitized = sanitized.replace(/\x00TAG(\d+)\x00/g, (_, idx) => tagPlaceholders[Number(idx)]);
 
-  const processed = preprocessMarkdown(preprocessMathDelimiters(sanitized));
-  const html = marked.parse(processed, { renderer: agentRenderer }) as string;
-  const protectedHTML = protectProviderImageSrcInHTML(html);
+  const mathSafe = preprocessMathDelimiters(sanitized);
+  const imageSafe = replaceIncompleteImageWithPlaceholder(mathSafe);
+  const { content: markdownWithPlaceholders, htmlSnippets } = extractRenderableHtmlPlaceholders(imageSafe);
+  const html = marked.parse(markdownWithPlaceholders, { renderer: agentRenderer }) as string;
+  const htmlWithCitations = restoreRenderableHtmlPlaceholders(html, htmlSnippets);
+  const protectedHTML = protectProviderImageSrcInHTML(htmlWithCitations);
   return DOMPurify.sanitize(protectedHTML, DOMPurifyConfig);
+};
+
+// Renders an answer event's content. Strips final-answer wrappers
+// (e.g. <answer>…</answer>, "Final Answer:") that some models emit instead
+// of calling the structured final_answer tool, then delegates to the
+// standard markdown renderer.
+const renderAnswerContent = (content: any): string => {
+  const contentStr = typeof content === 'string' ? content : String(content || '');
+  return renderMarkdownContent(unwrapFinalAnswerWrappers(contentStr));
 };
 
 // Legacy Markdown rendering function (kept for summaries)
@@ -1736,11 +1885,14 @@ const renderMarkdown = (content: any): string => {
   if (!contentStr.trim()) return '';
 
   try {
-    const processed = preprocessMarkdown(preprocessMathDelimiters(contentStr));
-    const html = marked.parse(processed, { renderer: agentRenderer }) as string;
+    const mathSafe = preprocessMathDelimiters(contentStr);
+    const imageSafe = replaceIncompleteImageWithPlaceholder(mathSafe);
+    const { content: markdownWithPlaceholders, htmlSnippets } = extractRenderableHtmlPlaceholders(imageSafe);
+    const html = marked.parse(markdownWithPlaceholders, { renderer: agentRenderer }) as string;
     if (!html) return '';
 
-    const protectedHTML = protectProviderImageSrcInHTML(html);
+    const htmlWithCitations = restoreRenderableHtmlPlaceholders(html, htmlSnippets);
+    const protectedHTML = protectProviderImageSrcInHTML(htmlWithCitations);
     return DOMPurify.sanitize(protectedHTML, DOMPurifyConfig);
   } catch (e) {
     console.error('Markdown rendering error:', e, 'Content:', contentStr.substring(0, 100));
@@ -2134,24 +2286,26 @@ const formatJSON = (obj: any): string => {
   }
 };
 
-// Helper function to get actual content (from answer or last thinking)
+// Helper function to get actual content (from answer or last thinking).
+// Strips final-answer wrappers (e.g. <answer>…</answer>, "Final Answer:")
+// so callers like copy and add-to-knowledge get clean text.
 const getActualContent = (answerEvent: any): string => {
   // First try to get content from answer event
   const answerContent = (answerEvent?.content || '').trim();
   if (answerContent) {
-    return answerContent;
+    return unwrapFinalAnswerWrappers(answerContent).trim();
   }
-  
+
   // If answer is empty, try to get from last thinking
   const stream = eventStream.value;
   if (stream && Array.isArray(stream)) {
     const thinkingEvents = stream.filter((e: any) => e.type === 'thinking' && e.content && e.content.trim());
     if (thinkingEvents.length > 0) {
       const lastThinking = thinkingEvents[thinkingEvents.length - 1];
-      return (lastThinking.content || '').trim();
+      return unwrapFinalAnswerWrappers((lastThinking.content || '').trim()).trim();
     }
   }
-  
+
   return '';
 };
 
@@ -2413,7 +2567,7 @@ const handleAddToKnowledge = (answerEvent: any) => {
         background: var(--td-bg-color-secondarycontainer);
         padding: 2px 5px;
         border-radius: 3px;
-        font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+        font-family: var(--app-font-family-mono);
         font-size: 11px;
       }
       
@@ -2962,7 +3116,7 @@ const handleAddToKnowledge = (answerEvent: any) => {
     padding: 0;
     
     .detail-output {
-      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'Courier New', monospace;
+      font-family: var(--app-font-family-mono);
       font-size: 11px;
       color: var(--td-text-color-primary);
       padding: 12px;
@@ -3199,7 +3353,7 @@ const handleAddToKnowledge = (answerEvent: any) => {
     background: var(--td-bg-color-container);
     padding: 10px;
     border-radius: 6px;
-    font-family: 'Monaco', 'Courier New', monospace;
+    font-family: var(--app-font-family-mono);
     color: var(--td-text-color-primary);
     margin: 0;
     overflow-x: auto;
@@ -3372,7 +3526,7 @@ const handleAddToKnowledge = (answerEvent: any) => {
     }
     
     code {
-      font-family: monospace;
+      font-family: var(--app-font-family-mono);
       font-size: 13px;
       padding: 2px 4px;
       background: var(--td-bg-color-secondarycontainer);
@@ -3427,6 +3581,58 @@ const handleAddToKnowledge = (answerEvent: any) => {
         border-bottom-style: solid;
         text-decoration: none !important;
       }
+    }
+
+    table {
+      display: block;
+      width: fit-content;
+      max-width: 100%;
+      overflow-x: auto;
+      margin: 0 0 16px;
+      border-collapse: collapse;
+      font-size: 13px;
+      line-height: 1.55;
+      background: var(--td-bg-color-container);
+      border: 1px solid var(--td-component-stroke);
+      border-radius: 6px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    table thead {
+      background: var(--td-bg-color-secondarycontainer);
+    }
+
+    table th,
+    table td {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--td-component-stroke);
+      border-right: 1px solid var(--td-component-stroke);
+      text-align: left;
+      vertical-align: top;
+      word-break: break-word;
+    }
+
+    table th {
+      font-weight: 600;
+      color: var(--td-text-color-primary);
+      white-space: nowrap;
+    }
+
+    table th:last-child,
+    table td:last-child {
+      border-right: none;
+    }
+
+    table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    table tbody tr:hover {
+      background: var(--td-bg-color-secondarycontainer);
+    }
+
+    table code {
+      font-size: 12px;
     }
   }
 }

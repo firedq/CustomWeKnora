@@ -87,7 +87,7 @@ marked.use({
     breaks: true,  // 全局启用单个换行支持
 });
 
-marked.use(markedKatex({ throwOnError: false }));
+marked.use(markedKatex({ throwOnError: false, nonStandard: true }));
 
 const preprocessMathDelimiters = (rawText) => {
     if (!rawText || typeof rawText !== 'string') {
@@ -386,7 +386,7 @@ onBeforeUnmount(() => {
         background: var(--td-bg-color-secondarycontainer);
         padding: 2px 5px;
         border-radius: 3px;
-        font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+        font-family: var(--app-font-family-mono);
         font-size: 11px;
     }
 

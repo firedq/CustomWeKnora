@@ -497,6 +497,24 @@
                       </div>
                     </div>
 
+                    <!-- 问题理解模型（独立模型，留空则复用主对话模型） -->
+                    <div v-if="formData.config.multi_turn_enabled && !isAgentMode && formData.config.enable_rewrite" class="setting-row">
+                      <div class="setting-info">
+                        <label>{{ $t('agent.editor.queryUnderstandModel') }}</label>
+                        <p class="desc">{{ $t('agentEditor.desc.queryUnderstandModel') }}</p>
+                      </div>
+                      <div class="setting-control">
+                        <ModelSelector
+                          model-type="KnowledgeQA"
+                          :selected-model-id="formData.config.query_understand_model_id"
+                          :all-models="allModels"
+                          @update:selected-model-id="(val: string) => formData.config.query_understand_model_id = val"
+                          @add-model="handleAddModel('llm')"
+                          :placeholder="$t('agent.editor.queryUnderstandModelPlaceholder')"
+                        />
+                      </div>
+                    </div>
+
                     <!-- 改写系统提示词 -->
                     <div v-if="formData.config.multi_turn_enabled && !isAgentMode && formData.config.enable_rewrite" class="setting-row setting-row-vertical">
                       <div class="setting-info">
@@ -758,8 +776,8 @@
                       <div class="setting-control">
                         <t-input-number 
                           v-model="formData.config.llm_call_timeout" 
-                          :min="0" 
-                          :max="600" 
+                          :min="0"
+                          :max="3600"
                           theme="column"
                           :placeholder="$t('agentEditor.llmCallTimeout.placeholder')"
                           clearable
@@ -988,11 +1006,20 @@
                       </div>
                     </div>
 
-                    <!-- ReRank 模型（当配置了知识库时显示） -->
-                    <div v-if="needsRerankModel" class="setting-row">
+                    <!-- ReRank 模型（关联知识库时常驻显示，仅在作用域内存在 RAG 类型 KB 时必填） -->
+                    <div v-if="hasKnowledgeBase" class="setting-row">
                       <div class="setting-info">
-                        <label>{{ $t('agent.editor.rerankModel') }} <span class="required">*</span></label>
-                        <p class="desc">{{ $t('agent.editor.rerankModelDesc') }}</p>
+                        <label>
+                          {{ $t('agent.editor.rerankModel') }}
+                          <span v-if="needsRerankModel" class="required">*</span>
+                        </label>
+                        <p class="desc">
+                          {{ $t('agent.editor.rerankModelDesc') }}
+                          <template v-if="!needsRerankModel">
+                            <br />
+                            <span class="hint">{{ $t('agent.editor.rerankModelOptionalHint') }}</span>
+                          </template>
+                        </p>
                       </div>
                       <div class="setting-control">
                         <ModelSelector
@@ -1055,6 +1082,7 @@
                         </div>
                       </div>
                     </div>
+
                   </div>
                 </div>
 
@@ -1202,8 +1230,8 @@
                       </div>
                     </div>
 
-                    <!-- 重排TopK -->
-                    <div class="setting-row">
+                    <!-- 重排TopK（仅在配置了 Rerank 模型时展示） -->
+                    <div v-if="formData.config.rerank_model_id" class="setting-row">
                       <div class="setting-info">
                         <label>{{ $t('agent.editor.rerankTopK') }}</label>
                         <p class="desc">{{ $t('agentEditor.desc.rerankTopK') }}</p>
@@ -1213,8 +1241,8 @@
                       </div>
                     </div>
 
-                    <!-- 重排阈值 -->
-                    <div class="setting-row">
+                    <!-- 重排阈值（仅在配置了 Rerank 模型时展示） -->
+                    <div v-if="formData.config.rerank_model_id" class="setting-row">
                       <div class="setting-info">
                         <label>{{ $t('agent.editor.rerankThreshold') }}</label>
                         <p class="desc">{{ $t('agentEditor.desc.rerankThreshold') }}</p>
@@ -1224,6 +1252,17 @@
                           <t-slider v-model="formData.config.rerank_threshold" :min="-10" :max="10" :step="0.01" />
                           <span class="slider-value">{{ formData.config.rerank_threshold?.toFixed(1) }}</span>
                         </div>
+                      </div>
+                    </div>
+
+                    <!-- 表格数据分析（仅普通模式，命中 CSV/Excel 时会多一次 LLM 调用生成 SQL） -->
+                    <div v-if="!isAgentMode" class="setting-row">
+                      <div class="setting-info">
+                        <label>{{ $t('agentEditor.dataAnalysis.enableLabel') }}</label>
+                        <p class="desc">{{ $t('agentEditor.dataAnalysis.enableDesc') }}</p>
+                      </div>
+                      <div class="setting-control">
+                        <t-switch v-model="formData.config.data_analysis_enabled" />
                       </div>
                     </div>
 
@@ -1345,8 +1384,9 @@
                     <h2>{{ $t('agentEditor.im.title') }}</h2>
                     <p class="section-description">
                       {{ $t('agentEditor.im.description') }}
-                      <a href="https://github.com/Tencent/WeKnora/blob/main/docs/IM%E9%9B%86%E6%88%90%E5%BC%80%E5%8F%91%E6%96%87%E6%A1%A3.md" target="_blank" rel="noopener noreferrer" class="section-doc-link">
-                        <t-icon name="link" class="link-icon" />{{ $t('agentEditor.im.docLink') }}
+                      <a href="https://github.com/Tencent/WeKnora/blob/main/docs/IM%E9%9B%86%E6%88%90%E5%BC%80%E5%8F%91%E6%96%87%E6%A1%A3.md" target="_blank" rel="noopener noreferrer" class="doc-link">
+                        {{ $t('agentEditor.im.docLink') }}
+                        <t-icon name="link" class="link-icon" />
                       </a>
                     </p>
                   </div>
@@ -1840,6 +1880,8 @@ const defaultFormData = {
     image_storage_provider: '',
     // 文件类型限制
     supported_file_types: [] as string[],
+    // 数据分析阶段开关（默认关闭，避免在普通问答上多一次 LLM 调用生成 SQL）
+    data_analysis_enabled: false,
     // FAQ 策略设置
     faq_priority_enabled: true, // 是否启用 FAQ 优先策略
     faq_direct_answer_threshold: 0.9, // FAQ 直接回答阈值（相似度高于此值直接使用 FAQ 答案）
@@ -1859,6 +1901,7 @@ const defaultFormData = {
     // 高级设置（普通模式）
     enable_query_expansion: true,
     enable_rewrite: true,
+    query_understand_model_id: '',
     rewrite_prompt_system: '',
     rewrite_prompt_user: '',
     fallback_strategy: 'model' as 'fixed' | 'model',
@@ -2018,21 +2061,38 @@ const kbSatisfiesPresetFilter = (kb: { capabilities?: KBCapabilities; ragEnabled
   return { ok: true, reason: '' };
 };
 
+// "快速问答 / RAG 模式"对 KB 的隐式要求：必须有 vector 或 keyword 索引。
+// 这里跟 `activeAgentTypePreset` 解耦——quick-answer 没有 agent_type，
+// 所以预设链路恒为 null，但 wiki-only KB 在 RAG 模式下检索结果永远为空，
+// 必须在 UI 上 disable + 提示，避免用户白选。
+const kbSatisfiesQuickAnswerMode = (kb: { capabilities?: KBCapabilities; ragEnabled?: boolean }): { ok: boolean; reason: string } => {
+  if (agentMode.value !== 'quick-answer') return { ok: true, reason: '' };
+  const hasRag = kb.capabilities
+    ? (!!kb.capabilities.vector || !!kb.capabilities.keyword)
+    : !!kb.ragEnabled;
+  if (hasRag) return { ok: true, reason: '' };
+  return { ok: false, reason: t('agentEditor.agentType.kbMismatch.quickAnswer') };
+};
+
 // KB 过滤后的选项（用于"指定知识库"下拉）— 不满足的仍保留但标记 disabled + tooltip
 const filteredKbOptionsForPreset = computed(() => {
   const preset = activeAgentTypePreset.value;
   return kbOptions.value.map(kb => {
-    const { ok, reason } = kbSatisfiesPresetFilter(kb, preset);
+    const presetResult = kbSatisfiesPresetFilter(kb, preset);
+    const modeResult = kbSatisfiesQuickAnswerMode(kb);
+    const ok = presetResult.ok && modeResult.ok;
+    const reason = !presetResult.ok ? presetResult.reason : (!modeResult.ok ? modeResult.reason : '');
     return { ...kb, disabled: !ok, disabledReason: reason };
   });
 });
 const filteredMyKbOptions = computed(() => filteredKbOptionsForPreset.value.filter(kb => !kb.shared));
 const filteredSharedKbOptions = computed(() => filteredKbOptionsForPreset.value.filter(kb => kb.shared));
 
-// 当前选中的 KB 中，有多少个在新预设下会被禁用（用于保存前提示）
+// 当前选中的 KB 中，有多少个在新预设 / 模式下会被禁用（用于保存前提示）。
+// quick-answer 模式下 preset 恒为 null，但 wiki-only KB 仍属"被禁用"，
+// 所以这里不再依赖 preset 是否存在，直接看是否有被 disable 的选中项。
 const incompatibleSelectedKbCount = computed(() => {
-  const preset = activeAgentTypePreset.value;
-  if (!preset || kbSelectionMode.value !== 'selected') return 0;
+  if (kbSelectionMode.value !== 'selected') return 0;
   const selected = new Set(formData.value.config.knowledge_bases || []);
   return filteredKbOptionsForPreset.value.filter(kb => selected.has(kb.value) && kb.disabled).length;
 });
@@ -3523,12 +3583,9 @@ const handleSave = async () => {
     return;
   }
 
-  // 校验 ReRank 模型（当需要时必填）
-  if (needsRerankModel.value && !formData.value.config.rerank_model_id) {
-    MessagePlugin.error(t('agent.editor.rerankModelRequired'));
-    currentSection.value = 'knowledge';
-    return;
-  }
+  // ReRank 模型（可选）
+  // 运行时若 rerank_model_id 为空会自动跳过 rerank，无需在保存时强制要求。
+  // 仅当用户已选择 rerank 模型时，才校验相关参数。
 
   // 过滤空推荐问题
   if (formData.value.config.suggested_prompts) {
@@ -3629,7 +3686,7 @@ const handleSave = async () => {
 
 .sidebar-title {
   margin: 0;
-  font-family: "PingFang SC";
+  font-family: var(--app-font-family);
   font-size: 18px;
   font-weight: 600;
   color: var(--td-text-color-primary);
@@ -3649,7 +3706,7 @@ const handleSave = async () => {
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s ease;
-  font-family: "PingFang SC";
+  font-family: var(--app-font-family);
   font-size: 14px;
   color: var(--td-text-color-secondary);
 
@@ -3712,24 +3769,8 @@ const handleSave = async () => {
     margin: 0;
     line-height: 1.5;
 
-    .section-doc-link {
+    .doc-link {
       margin-left: 8px;
-      color: var(--td-brand-color);
-      text-decoration: none;
-      font-weight: 500;
-      display: inline-flex;
-      align-items: center;
-      gap: 3px;
-      transition: color 0.2s ease;
-
-      .link-icon {
-        font-size: 14px;
-      }
-
-      &:hover {
-        color: var(--td-brand-color-hover);
-        text-decoration: underline;
-      }
     }
   }
 }
@@ -3824,6 +3865,10 @@ const handleSave = async () => {
     color: var(--td-text-color-secondary);
     margin: 0;
     line-height: 1.5;
+
+    .hint {
+      color: var(--td-warning-color, var(--td-text-color-placeholder));
+    }
   }
 }
 
@@ -3934,7 +3979,7 @@ const handleSave = async () => {
 .slider-value {
   width: 40px;
   text-align: right;
-  font-family: monospace;
+  font-family: var(--app-font-family-mono);
   font-size: 14px;
   color: var(--td-text-color-primary);
 }
@@ -3954,48 +3999,6 @@ const handleSave = async () => {
 
   :deep(.t-input) {
     flex: 1;
-  }
-}
-
-// Radio-group 样式优化，符合项目主题风格
-:deep(.t-radio-group) {
-  .t-radio-group--filled {
-    background: var(--td-bg-color-secondarycontainer);
-  }
-  .t-radio-button {
-    border-color: var(--td-component-stroke);
-
-    &:hover:not(.t-is-disabled) {
-      border-color: var(--td-brand-color);
-      color: var(--td-brand-color);
-    }
-
-    &.t-is-checked {
-      background: var(--td-brand-color);
-      border-color: var(--td-brand-color);
-      color: var(--td-text-color-anti);
-
-      &:hover:not(.t-is-disabled) {
-        background: var(--td-brand-color);
-        border-color: var(--td-brand-color-active);
-        color: var(--td-text-color-anti);
-      }
-    }
-
-    // 禁用状态样式
-    &.t-is-disabled {
-      background: var(--td-bg-color-secondarycontainer);
-      border-color: var(--td-component-stroke);
-      color: var(--td-text-color-placeholder);
-      cursor: not-allowed;
-      opacity: 0.6;
-
-      &.t-is-checked {
-        background: var(--td-bg-color-secondarycontainer);
-        border-color: var(--td-component-stroke);
-        color: var(--td-text-color-disabled);
-      }
-    }
   }
 }
 
@@ -4411,65 +4414,6 @@ const handleSave = async () => {
   font-style: italic;
 }
 
-// Checkbox 选中样式
-:deep(.t-checkbox) {
-  &.t-is-checked {
-    .t-checkbox__input {
-      border-color: var(--td-brand-color);
-      background-color: var(--td-brand-color);
-    }
-  }
-  
-  &:hover:not(.t-is-disabled) {
-    .t-checkbox__input {
-      border-color: var(--td-brand-color);
-    }
-  }
-}
-
-// Switch 样式
-:deep(.t-switch) {
-  &.t-is-checked {
-    background-color: var(--td-brand-color);
-    
-    &:hover:not(.t-is-disabled) {
-      background-color: var(--td-brand-color-active);
-    }
-  }
-}
-
-// Slider 样式
-:deep(.t-slider) {
-  .t-slider__track {
-    background-color: var(--td-brand-color);
-  }
-  
-  .t-slider__button {
-    border-color: var(--td-brand-color);
-  }
-}
-
-// Button 主题样式
-:deep(.t-button--theme-primary) {
-  background-color: var(--td-brand-color);
-  border-color: var(--td-brand-color);
-  
-  &:hover:not(.t-is-disabled) {
-    background-color: var(--td-brand-color-active);
-    border-color: var(--td-brand-color-active);
-  }
-}
-
-// Input/Select focus 样式
-:deep(.t-input),
-:deep(.t-textarea),
-:deep(.t-select) {
-  &.t-is-focused,
-  &:focus-within {
-    border-color: var(--td-brand-color);
-    box-shadow: 0 0 0 2px rgba(7, 192, 95, 0.1);
-  }
-}
 
 // textarea 与模板选择器容器
 .textarea-with-template {
@@ -4480,7 +4424,7 @@ const handleSave = async () => {
 // 系统提示词输入框样式
 .system-prompt-textarea {
   width: 100%;
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-family: var(--app-font-family-mono);
   font-size: 13px;
 
   :deep(textarea) {
@@ -4528,7 +4472,7 @@ const handleSave = async () => {
     align-items: center;
     padding: 1px 5px;
     border-radius: 3px;
-    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-family: var(--app-font-family-mono);
     font-size: 11px;
     color: var(--td-text-color-primary, #333);
     background-color: var(--td-bg-color-secondarycontainer, #f3f3f3);
@@ -4585,7 +4529,7 @@ const handleSave = async () => {
       background: var(--td-bg-color-container-hover, #f5f7fa);
       padding: 2px 5px;
       border-radius: 3px;
-      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+      font-family: var(--app-font-family-mono);
       font-size: 11px;
       color: var(--td-brand-color, #0052d9);
     }

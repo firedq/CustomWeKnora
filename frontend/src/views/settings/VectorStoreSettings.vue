@@ -14,7 +14,7 @@
       <div class="settings-group">
         <div class="section-subheader">
           <h3>{{ t('vectorStoreSettings.storesTitle') }}</h3>
-          <t-button theme="primary" size="small" @click="openAddDialog">
+          <t-button theme="primary" variant="outline" size="small" @click="openAddDialog">
             <template #icon><add-icon /></template>
             {{ t('vectorStoreSettings.addStore') }}
           </t-button>
@@ -764,7 +764,7 @@ onMounted(async () => {
 .readonly-value {
   color: var(--td-text-color-primary);
   font-size: 12px;
-  font-family: 'SF Mono', Monaco, Menlo, monospace;
+  font-family: var(--app-font-family-mono);
   word-break: break-all;
 }
 

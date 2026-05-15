@@ -107,6 +107,12 @@ services:
       - WEAVIATE_SCHEME=${WEAVIATE_SCHEME:-http}
       - WEAVIATE_AUTH_ENABLED=${WEAVIATE_AUTH_ENABLED:-false}
       - WEAVIATE_API_KEY=${WEAVIATE_API_KEY:-}
+      - DORIS_ADDR=${DORIS_ADDR:-doris-fe:9030}
+      - DORIS_HTTP_PORT=${DORIS_HTTP_PORT:-8030}
+      - DORIS_DATABASE=${DORIS_DATABASE:-weknora}
+      - DORIS_USERNAME=${DORIS_USERNAME:-root}
+      - DORIS_PASSWORD=${DORIS_PASSWORD:-}
+      - DORIS_TABLE_PREFIX=${DORIS_TABLE_PREFIX:-weknora_embeddings}
       - STORAGE_TYPE=${STORAGE_TYPE:-}
       - LOCAL_STORAGE_BASE_DIR=${LOCAL_STORAGE_BASE_DIR:-}
       - AUTO_RECOVER_DIRTY=${AUTO_RECOVER_DIRTY:-true}
@@ -129,6 +135,9 @@ services:
       - TENANT_AES_KEY=${TENANT_AES_KEY:-}
       - SYSTEM_AES_KEY=${SYSTEM_AES_KEY:-}
       - SSRF_WHITELIST=${SSRF_WHITELIST:-}
+      # Always allow the optional searxng sidecar (compose service hostname);
+      # merged on top of SSRF_WHITELIST so user overrides don't clobber it.
+      - SSRF_WHITELIST_EXTRA=${SSRF_WHITELIST_EXTRA:-searxng}
       - CONCURRENCY_POOL_SIZE=${CONCURRENCY_POOL_SIZE:-5}
       - JWT_SECRET=${JWT_SECRET:-}
       # Crypto: 主密钥和盐值，用于 AppSecret 等敏感字段的 AES-256 加密
@@ -144,6 +153,7 @@ services:
       - WEKNORA_SANDBOX_DOCKER_IMAGE=${WEKNORA_SANDBOX_DOCKER_IMAGE:-wechatopenai/weknora-sandbox:${WEKNORA_VERSION:-latest}}
       # Agent LLM call timeout
       - WEKNORA_AGENT_LLM_TIMEOUT=${WEKNORA_AGENT_LLM_TIMEOUT:-}
+      - WEKNORA_AGENT_TOOL_APPROVAL_TIMEOUT=${WEKNORA_AGENT_TOOL_APPROVAL_TIMEOUT:-}
       - APK_MIRROR_ARG=${APK_MIRROR_ARG:-}
     depends_on:
       redis:
@@ -178,13 +188,23 @@ services:
       args:
         - APT_MIRROR=${APT_MIRROR:-}
     container_name: WeKnora-docreader
-    ports:
-      - "${DOCREADER_PORT:-50051}:50051"
+    # docreader gRPC ships without auth/TLS and is only consumed by the app
+    # container over the WeKnora-network (DOCREADER_ADDR defaults to
+    # docreader:50051), so we don't publish 50051 to the host. `expose` keeps
+    # the port reachable inside the compose network for documentation only.
+    # If you need to call docreader from outside the host (e.g. for debugging),
+    # add a `ports:` entry locally, preferably bound to 127.0.0.1.
+    expose:
+      - "50051"
     volumes:
       - docreader-tmp:/tmp/docreader
     environment:
       - DOCREADER_IMAGE_OUTPUT_DIR=/tmp/docreader
       - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-}
+      - DOCREADER_MARKITDOWN_MAX_WORKERS=${DOCREADER_MARKITDOWN_MAX_WORKERS:-1}
+      - DOCREADER_PDF_RENDER_MAX_WORKERS=${DOCREADER_PDF_RENDER_MAX_WORKERS:-1}
+      - DOCREADER_PDF_RENDER_DPI=${DOCREADER_PDF_RENDER_DPI:-200}
+      - DOCREADER_PDF_JPEG_QUALITY=${DOCREADER_PDF_JPEG_QUALITY:-90}
     healthcheck:
       test: ["CMD", "grpc_health_probe", "-addr=localhost:50051"]
       interval: 30s
@@ -226,6 +246,58 @@ services:
     restart: always
     networks:
       - WeKnora-network
+
+  # One-shot init: copy the read-only template settings.yml into a named volume
+  # before searxng starts. Necessary because the searxng entrypoint sed-replaces
+  # `ultrasecretkey` in /etc/searxng/settings.yml in place; bind-mounting the
+  # repo file directly would write the resolved SEARXNG_SECRET back into the
+  # working tree (and prevent re-templating on subsequent restarts).
+  searxng-init:
+    image: busybox:1.36
+    container_name: WeKnora-searxng-init
+    command: ["sh", "-c", "cp /template/settings.yml /etc/searxng/settings.yml && chmod 0644 /etc/searxng/settings.yml"]
+    volumes:
+      - ./docker/searxng/settings.yml:/template/settings.yml:ro
+      - searxng_config:/etc/searxng
+    restart: "no"
+    networks:
+      - WeKnora-network
+    profiles:
+      - searxng
+      - full
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: WeKnora-searxng
+    # Bind to loopback by default; override SEARXNG_BIND=0.0.0.0 only after
+    # rotating SEARXNG_SECRET and (optionally) re-enabling limiter in settings.yml.
+    ports:
+      - "${SEARXNG_BIND:-127.0.0.1}:${SEARXNG_PORT:-8888}:8080"
+    volumes:
+      - searxng_config:/etc/searxng
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:${SEARXNG_PORT:-8888}/
+      - INSTANCE_NAME=weknora-searxng
+      # Default value lets `docker compose --profile searxng up` work zero-config.
+      # Override via .env (e.g. `openssl rand -hex 32`) before exposing the
+      # instance beyond the default 127.0.0.1 bind, since secret_key signs
+      # image-proxy URLs and a shared default would be guessable by anyone.
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-weknora-default-searxng-secret-rotate-before-exposing-publicly}
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    restart: unless-stopped
+    depends_on:
+      searxng-init:
+        condition: service_completed_successfully
+    networks:
+      - WeKnora-network
+    profiles:
+      - searxng
+      - full
 
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
@@ -361,6 +433,61 @@ services:
     restart: unless-stopped
     profiles:
       - weaviate
+
+  # ---------------------------------------------------------------------------
+  # Apache Doris 4.1（FE + BE 单实例 standalone 部署，opt-in via `--profile doris`）
+  #
+  # 版本要求：必须 >= 3.0（HNSW ANN 索引、cosine_distance_approximate、
+  # Stream Load partial_columns）。本 compose 使用 4.1 官方稳定 tag。
+  #
+  # 端口说明：
+  #   - 9030 (FE MySQL)：WeKnora 主链路读写、SQL 查询都走此端口。
+  #   - 8030 (FE HTTP)：Stream Load partial update 入口。
+  #   - 8040 (BE)     ：BE 心跳与数据传输；FE 会把 stream load 重定向到 BE。
+  #
+  # 启用方式：
+  #   docker compose --profile doris up -d
+  #
+  # 数据持久化在 doris_fe_data / doris_be_data 卷中。
+  # ---------------------------------------------------------------------------
+  doris-fe:
+    image: apache/doris:fe-4.1.0
+    container_name: WeKnora-doris-fe
+    hostname: doris-fe
+    environment:
+      - FE_SERVERS=fe1:doris-fe:9010
+      - FE_ID=1
+    ports:
+      - "${DORIS_FE_HTTP_PORT:-8030}:8030"
+      - "${DORIS_FE_MYSQL_PORT:-9030}:9030"
+    volumes:
+      - doris_fe_meta:/opt/apache-doris/fe/doris-meta
+      - doris_fe_log:/opt/apache-doris/fe/log
+    networks:
+      - WeKnora-network
+    restart: unless-stopped
+    profiles:
+      - doris
+
+  doris-be:
+    image: apache/doris:be-4.1.0
+    container_name: WeKnora-doris-be
+    hostname: doris-be
+    environment:
+      - FE_SERVERS=fe1:doris-fe:9010
+      - BE_ADDR=doris-be:9050
+    depends_on:
+      - doris-fe
+    ports:
+      - "${DORIS_BE_HTTP_PORT:-8040}:8040"
+    volumes:
+      - doris_be_storage:/opt/apache-doris/be/storage
+      - doris_be_log:/opt/apache-doris/be/log
+    networks:
+      - WeKnora-network
+    restart: unless-stopped
+    profiles:
+      - doris
 
   dex:
     image: dexidp/dex:latest
@@ -607,6 +734,11 @@ volumes:
   qdrant_data:
   milvus_data:
   weaviate_data:
+  doris_fe_meta:
+  doris_fe_log:
+  doris_be_storage:
+  doris_be_log:
   langfuse_clickhouse_data:
   langfuse_clickhouse_logs:
   langfuse_minio_data:
+  searxng_config:

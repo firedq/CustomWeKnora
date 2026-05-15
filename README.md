@@ -13,16 +13,22 @@
 </p>
 <p align="center">
     <a href="https://weknora.weixin.qq.com" target="_blank">
-        <img alt="官方网站" src="https://img.shields.io/badge/官方网站-WeKnora-4e6b99">
+        <img alt="Official Website" src="https://img.shields.io/badge/Official Website-WeKnora-4e6b99">
     </a>
     <a href="https://chatbot.weixin.qq.com" target="_blank">
-        <img alt="微信对话开放平台" src="https://img.shields.io/badge/微信对话开放平台-5ac725">
+        <img alt="WeChat Dialog Open Platform" src="https://img.shields.io/badge/WeChat Dialog Open Platform-5ac725">
+    </a>
+    <a href="https://chromewebstore.google.com/detail/jpemjbopikggjlmikmclgbmkhhopjdgd" target="_blank">
+        <img alt="Chrome Extension" src="https://img.shields.io/badge/Chrome Extension-WeKnora-4285F4">
+    </a>
+    <a href="https://clawhub.ai/lyingbug/weknora" target="_blank">
+        <img alt="ClawHub Skill" src="https://img.shields.io/badge/ClawHub Skill-WeKnora-ff6b35">
     </a>
     <a href="https://github.com/Tencent/WeKnora/blob/main/LICENSE">
         <img src="https://img.shields.io/badge/License-MIT-ffffff?labelColor=d4eaf7&color=2e6cc4" alt="License">
     </a>
     <a href="./CHANGELOG.md">
-        <img alt="Version" src="https://img.shields.io/badge/version-0.5.0-2e6cc4?labelColor=d4eaf7">
+        <img alt="Version" src="https://img.shields.io/badge/version-0.5.2-2e6cc4?labelColor=d4eaf7">
     </a>
 </p>
 
@@ -51,16 +57,18 @@ The framework supports auto-syncing knowledge from Feishu, Notion, and Yuque (mo
 
 ## ✨ Latest Updates
 
-**v0.5.0 Highlights:**
+**v0.5.2 Highlights:**
 
-- **Wiki Mode**: A brand-new agent-driven Wiki knowledge system that automatically distills raw documents into interlinked markdown pages. It ships with a dedicated WikiBrowser and an interactive knowledge graph that visualizes references and relationships between pages, helping teams grow a structured, continuously evolving knowledge base from their own materials.
-- **Observability**: Integrated Langfuse for agent ReAct loop, LLM token tracking, tool calls, and asynq pipeline tracing, providing deep visibility into agent reasoning and system performance.
-- **Customizable Indexing Strategy**: Users can now independently configure and toggle Vector Search, Keyword Search (Hybrid), Wiki, and Knowledge Graph indexing per knowledge base.
-- **Vector Store UI & Per-KB Binding**: Full frontend management for Vector Stores with connectivity testing, plus the ability to bind distinct vector databases to specific knowledge bases.
-- **Yuque Connector**: Yuque data source integration with API client, full and incremental fetch, enabling seamless synchronization of Yuque documents.
-- **Agent Capabilities**: Added `json_repair` tool for automatic JSON fixing, preloaded `OpenMAIC Classroom` skill, and DuckDB multi-sheet Excel data analysis.
-- **Frontend & Debugging**: Added copy action for model cards in settings, and enhanced LLM request debugging and logging across all model providers.
-- **Bug Fixes**: Fixed DuckDB access issues by materializing knowledge files to temp path, removed rerank model requirement for wiki-only agents, and whitelisted offline protoc zip packages in dockerignore.
+- **Wiki Mode at Scale**: Wiki ingest now handles tens-of-thousands-document KBs via a generic task queue with dead-letter handling; the page-link graph gains a subgraph API + interactive exploration UI.
+- **MCP Human-in-the-Loop Approval**: Sensitive MCP tool calls pause the agent and wait for explicit user approval in the chat UI.
+- **More LLM / Vector DB / Storage / Search**: Anthropic (Claude), Apache Doris 4.1, Tencent VectorDB, Kingsoft Cloud KS3, and SearXNG are all new backends — pairing with the Vector Store management UI and per-KB indexing strategy toggles.
+- **Deeper Observability**: Langfuse spans expanded across retrieval / rerank / agent stages; end-to-end TTFB logged on both ends of the chat stream; LLM call timeouts hardened to keep worker pools healthy.
+- **Adaptive 3-Tier Chunking**: Documents are auto-routed to heading-aware / heuristic / recursive strategies, with a live preview panel in the KB editor. See [`docs/CHUNKING.md`](./docs/CHUNKING.md).
+- **Global Command Palette**: A ⌘K palette replaces the standalone search page and can start a new chat directly from any result.
+- **More Connectors & Mobile**: Yuque connector (full + incremental sync) joins Feishu / Notion; lightweight WeChat Mini Program client under `miniprogram/`.
+- **`weknora` CLI (Preview)**: An early version of the official command-line client lives under `cli/` — feedback welcome.
+- **Other Improvements**: Per-tenant RRF tuning, a dedicated query-understanding model, batch KB management, user-scoped session pinning, a tenant-wide IM channels overview, per-user font / theme preferences, a new OpenMaiC Classroom agent skill, and a full API-docs / Swagger / Client-SDK overhaul.
+- **Bug Fixes**: Embedder `(nil, nil)` SIGSEGV fixed; Mimo / DeepSeek `reasoning_content` round-trip restored; multi-turn agent history rebuilt from DB (with attachment replay); OIDC login fixed; many Wiki ingest reliability fixes; FAQ no longer hallucinates summaries from filenames on empty PDFs.
 
 <details>
 <summary><b>Earlier Releases</b></summary>
@@ -225,19 +233,19 @@ Fully modular pipeline from document parsing, vectorization, and retrieval to LL
 
 | Capability | Details |
 |------------|---------|
-| LLMs | OpenAI / Azure OpenAI / DeepSeek / Qwen (Alibaba Cloud) / Zhipu / Hunyuan / Doubao (Volcengine) / Gemini / MiniMax / NVIDIA / Novita AI / SiliconFlow / OpenRouter / Ollama |
+| LLMs | OpenAI / Azure OpenAI / Anthropic (Claude) / DeepSeek / Qwen (Alibaba Cloud) / Zhipu / Hunyuan / Doubao (Volcengine) / Gemini / MiniMax / NVIDIA / Novita AI / SiliconFlow / OpenRouter / Ollama |
 | Embeddings | Ollama / BGE / GTE / OpenAI-compatible APIs |
-| Vector DBs | PostgreSQL (pgvector) / Elasticsearch / Milvus / Weaviate / Qdrant |
-| Object Storage | Local / MinIO / AWS S3 / Volcengine TOS / Alibaba Cloud OSS |
+| Vector DBs | PostgreSQL (pgvector) / Elasticsearch / Milvus / Weaviate / Qdrant / Apache Doris / Tencent VectorDB |
+| Object Storage | Local / MinIO / AWS S3 / Volcengine TOS / Alibaba Cloud OSS / Kingsoft Cloud KS3 |
 | IM Channels | WeCom / Feishu / Slack / Telegram / DingTalk / Mattermost / WeChat |
-| Web Search | DuckDuckGo / Bing / Google / Tavily / Baidu / Ollama |
+| Web Search | DuckDuckGo / Bing / Google / Tavily / Baidu / Ollama / SearXNG |
 
 **Platform**
 
 | Capability | Details |
 |------------|---------|
 | Deployment | Local / Docker / Kubernetes (Helm) with private and offline support |
-| UI | Web UI / RESTful API / Chrome Extension / WeChat Mini Program |
+| UI | Web UI / RESTful API / CLI (`weknora`) / Chrome Extension / WeChat Mini Program |
 | Observability | Integrated Langfuse for ReAct loops, token tracking, tool calls, and pipeline tracing |
 | Task Management | MQ async tasks, automatic database migration on version upgrade |
 | Model Management | Centralized config, per-knowledge-base model selection, multi-tenant built-in model sharing, WeKnora Cloud hosted models and parsing |
@@ -259,6 +267,24 @@ The [WeKnora Mini Program](./miniprogram/README.md) provides a lightweight mobil
 - **Document Import** — Upload files, import web pages, or write Markdown knowledge via the agent
 - **Hybrid Search** — Search within or across knowledge bases with vector + keyword retrieval
 - **Knowledge Management** — List, browse, edit, and delete knowledge entries programmatically
+
+## ⌨️ Command-Line Interface
+
+`weknora` is the official CLI for driving the API from a terminal or AI agent.
+The command surface mirrors `gh` CLI's `<noun> <verb>` convention; output is
+human-readable by default and switches to a stable JSON envelope with `--json`.
+
+```bash
+weknora auth login --host https://kb.example.com
+weknora kb list
+weknora link --kb my-knowledge-base    # bind the current directory
+weknora doc upload notes.md
+weknora chat "summarise the design doc"
+```
+
+See [`cli/README.md`](./cli/README.md) for install + 5-minute quickstart
+and [`cli/AGENTS.md`](./cli/AGENTS.md) for the operational contract that
+AI agents (Claude Code, Cursor, Aider, …) can rely on.
 
 ## 🚀 Getting Started
 

@@ -1,9 +1,13 @@
 package handler
 
 import (
+	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"net/http"
+	"strings"
 
+	"github.com/Tencent/WeKnora/internal/agent/approval"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -14,13 +18,21 @@ import (
 
 // MCPServiceHandler handles MCP service related HTTP requests
 type MCPServiceHandler struct {
-	mcpServiceService interfaces.MCPServiceService
+	mcpServiceService      interfaces.MCPServiceService
+	mcpToolApprovalService interfaces.MCPToolApprovalService
+	toolApprovalGate       *approval.Gate
 }
 
 // NewMCPServiceHandler creates a new MCP service handler
-func NewMCPServiceHandler(mcpServiceService interfaces.MCPServiceService) *MCPServiceHandler {
+func NewMCPServiceHandler(
+	mcpServiceService interfaces.MCPServiceService,
+	mcpToolApprovalService interfaces.MCPToolApprovalService,
+	toolApprovalGate *approval.Gate,
+) *MCPServiceHandler {
 	return &MCPServiceHandler{
-		mcpServiceService: mcpServiceService,
+		mcpServiceService:      mcpServiceService,
+		mcpToolApprovalService: mcpToolApprovalService,
+		toolApprovalGate:       toolApprovalGate,
 	}
 }
 
@@ -444,4 +456,169 @@ func (h *MCPServiceHandler) GetMCPServiceResources(c *gin.Context) {
 		"success": true,
 		"data":    resources,
 	})
+}
+
+// ListMCPToolApprovals returns persisted require_approval flags for tools on an MCP service.
+func (h *MCPServiceHandler) ListMCPToolApprovals(c *gin.Context) {
+	ctx := c.Request.Context()
+	serviceID := secutils.SanitizeForLog(c.Param("id"))
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	if tenantID == 0 {
+		c.Error(errors.NewBadRequestError("Tenant ID cannot be empty"))
+		return
+	}
+	if h.mcpToolApprovalService == nil {
+		c.Error(errors.NewInternalServerError("MCP tool approval is not configured"))
+		return
+	}
+	rows, err := h.mcpToolApprovalService.ListByService(ctx, tenantID, serviceID)
+	if err != nil {
+		// Distinguish "service not found" from internal errors so the client
+		// gets an accurate status code instead of an opaque 404.
+		if strings.Contains(err.Error(), "not found") {
+			c.Error(errors.NewNotFoundError(err.Error()))
+			return
+		}
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{"service_id": serviceID})
+		c.Error(errors.NewInternalServerError(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": rows})
+}
+
+type setMCPToolApprovalBody struct {
+	RequireApproval bool `json:"require_approval"`
+}
+
+// SetMCPToolApproval sets whether a tool requires human approval before the agent may call it.
+//
+// SetMCPToolApproval godoc
+// @Summary      设置 MCP 工具人工审批策略
+// @Description  为指定 MCP 服务下的某个工具设置/更新审批要求
+// @Tags         MCP服务
+// @Accept       json
+// @Produce      json
+// @Param        id         path      string                  true  "MCP 服务 ID"
+// @Param        tool_name  path      string                  true  "工具名"
+// @Param        request    body      map[string]interface{}  true  "{require_approval: bool}"
+// @Success      200        {object}  map[string]interface{}  "更新结果"
+// @Failure      400        {object}  errors.AppError         "请求参数错误"
+// @Failure      404        {object}  errors.AppError         "MCP 服务或工具不存在"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /mcp-services/{id}/tool-approvals/{tool_name} [put]
+func (h *MCPServiceHandler) SetMCPToolApproval(c *gin.Context) {
+	ctx := c.Request.Context()
+	serviceID := secutils.SanitizeForLog(c.Param("id"))
+	// Gin already URL-decodes path params; do not call url.PathUnescape again
+	// or names containing literal "%" become corrupted.
+	toolName := c.Param("tool_name")
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	if tenantID == 0 {
+		c.Error(errors.NewBadRequestError("Tenant ID cannot be empty"))
+		return
+	}
+	if h.mcpToolApprovalService == nil {
+		c.Error(errors.NewInternalServerError("MCP tool approval is not configured"))
+		return
+	}
+	var body setMCPToolApprovalBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.Error(errors.NewBadRequestError(err.Error()))
+		return
+	}
+	if err := h.mcpToolApprovalService.SetRequireApproval(ctx, tenantID, serviceID, toolName, body.RequireApproval); err != nil {
+		c.Error(errors.NewInternalServerError(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+type resolveToolApprovalBody struct {
+	Decision     string          `json:"decision" binding:"required"` // approve | reject
+	ModifiedArgs json.RawMessage `json:"modified_args"`
+	Reason       string          `json:"reason"`
+}
+
+// ResolveToolApproval completes a pending MCP tool approval (agent execution resumes).
+//
+// ResolveToolApproval godoc
+// @Summary      处理 MCP 工具调用待审批请求
+// @Description  用户审批通过或驳回一次工具调用（用于 Agent 阻塞等待审批的场景）
+// @Tags         MCP服务
+// @Accept       json
+// @Produce      json
+// @Param        pending_id  path      string                  true  "待审批记录 ID"
+// @Param        request     body      map[string]interface{}  true  "{decision: \"approve\"|\"reject\", reason?: string, modified_args?: object}"
+// @Success      200         {object}  map[string]interface{}  "审批结果"
+// @Failure      400         {object}  errors.AppError         "请求参数错误"
+// @Failure      404         {object}  errors.AppError         "待审批记录不存在"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /agent/tool-approvals/{pending_id} [post]
+func (h *MCPServiceHandler) ResolveToolApproval(c *gin.Context) {
+	ctx := c.Request.Context()
+	pendingID := c.Param("pending_id")
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	if tenantID == 0 {
+		c.Error(errors.NewBadRequestError("Tenant ID cannot be empty"))
+		return
+	}
+	if h.toolApprovalGate == nil {
+		c.Error(errors.NewInternalServerError("Tool approval gate is not configured"))
+		return
+	}
+	var body resolveToolApprovalBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.Error(errors.NewBadRequestError(err.Error()))
+		return
+	}
+	dec := approval.Decision{Reason: body.Reason}
+	switch body.Decision {
+	case "approve":
+		dec.Approved = true
+		// Reject "null" / non-object payloads up front. Without this, "null"
+		// (4 bytes) passes the len>0 check and the downstream tool sees a nil
+		// argument map, silently losing the original args.
+		trimmed := strings.TrimSpace(string(body.ModifiedArgs))
+		if len(trimmed) > 0 && trimmed != "null" {
+			var probe map[string]interface{}
+			if err := json.Unmarshal(body.ModifiedArgs, &probe); err != nil || probe == nil {
+				c.Error(errors.NewBadRequestError("modified_args must be a non-null JSON object"))
+				return
+			}
+			dec.ModifiedArgs = body.ModifiedArgs
+		}
+	case "reject":
+		dec.Approved = false
+	default:
+		c.Error(errors.NewBadRequestError("decision must be approve or reject"))
+		return
+	}
+	userID, _ := c.Get(types.UserIDContextKey.String())
+	userIDStr, _ := userID.(string)
+	// Reject calls without an authenticated user up front. The gate's
+	// per-user authorization is fail-close, but surfacing 401 here gives
+	// a clearer signal that auth middleware did not populate the context.
+	if strings.TrimSpace(userIDStr) == "" {
+		c.Error(errors.NewUnauthorizedError("authenticated user required to resolve tool approval"))
+		return
+	}
+	if err := h.toolApprovalGate.Resolve(tenantID, userIDStr, pendingID, dec); err != nil {
+		switch {
+		case stderrors.Is(err, approval.ErrPendingNotFound):
+			c.Error(errors.NewNotFoundError("pending approval not found or already completed"))
+		case stderrors.Is(err, approval.ErrAlreadyResolved):
+			c.Error(errors.NewBadRequestError("pending approval already resolved (timeout / cancel raced your action)"))
+		case stderrors.Is(err, approval.ErrTenantMismatch):
+			c.Error(errors.NewBadRequestError("tenant mismatch"))
+		case stderrors.Is(err, approval.ErrUserMismatch):
+			c.Error(errors.NewBadRequestError("user mismatch: only the session owner may resolve this approval"))
+		default:
+			logger.ErrorWithFields(ctx, err, map[string]interface{}{"pending_id": pendingID})
+			c.Error(errors.NewInternalServerError(err.Error()))
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }

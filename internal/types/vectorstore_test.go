@@ -43,14 +43,25 @@ func TestIsEnvStoreID(t *testing.T) {
 
 func TestBuildEnvVectorStores(t *testing.T) {
 	envMap := map[string]string{
-		"ELASTICSEARCH_ADDR":     "http://es:9200",
-		"ELASTICSEARCH_USERNAME": "elastic",
-		"ELASTICSEARCH_PASSWORD": "secret",
-		"ELASTICSEARCH_INDEX":    "my_index",
-		"QDRANT_HOST":            "qdrant-host",
-		"QDRANT_API_KEY":         "qd-key",
-		"MILVUS_ADDRESS":         "milvus:19530",
-		"WEAVIATE_HOST":          "weaviate:8080",
+		"ELASTICSEARCH_ADDR":          "http://es:9200",
+		"ELASTICSEARCH_USERNAME":      "elastic",
+		"ELASTICSEARCH_PASSWORD":      "secret",
+		"ELASTICSEARCH_INDEX":         "my_index",
+		"QDRANT_HOST":                 "qdrant-host",
+		"QDRANT_API_KEY":              "qd-key",
+		"MILVUS_ADDRESS":              "milvus:19530",
+		"TENCENT_VECTORDB_ADDR":       "http://tencent-vdb",
+		"TENCENT_VECTORDB_USERNAME":   "root",
+		"TENCENT_VECTORDB_API_KEY":    "vdb-key",
+		"TENCENT_VECTORDB_DATABASE":   "weknora",
+		"TENCENT_VECTORDB_COLLECTION": "weknora_embeddings",
+		"WEAVIATE_HOST":               "weaviate:8080",
+		"DORIS_ADDR":                  "doris-fe:9030",
+		"DORIS_HTTP_PORT":             "8030",
+		"DORIS_DATABASE":              "weknora",
+		"DORIS_USERNAME":              "root",
+		"DORIS_PASSWORD":              "doris-pass",
+		"DORIS_TABLE_PREFIX":          "weknora_embeddings",
 	}
 	lookup := mockEnvLookup(envMap)
 
@@ -97,8 +108,8 @@ func TestBuildEnvVectorStores(t *testing.T) {
 	})
 
 	t.Run("all supported drivers", func(t *testing.T) {
-		stores := BuildEnvVectorStores("postgres,sqlite,elasticsearch_v8,elasticsearch_v7,qdrant,milvus,weaviate", lookup)
-		require.Len(t, stores, 7)
+		stores := BuildEnvVectorStores("postgres,sqlite,elasticsearch_v8,elasticsearch_v7,qdrant,milvus,weaviate,doris,tencent_vectordb", lookup)
+		require.Len(t, stores, 9)
 
 		ids := make([]string, len(stores))
 		for i, s := range stores {
@@ -111,6 +122,8 @@ func TestBuildEnvVectorStores(t *testing.T) {
 		assert.Contains(t, ids, "__env_qdrant__")
 		assert.Contains(t, ids, "__env_milvus__")
 		assert.Contains(t, ids, "__env_weaviate__")
+		assert.Contains(t, ids, "__env_doris__")
+		assert.Contains(t, ids, "__env_tencent_vectordb__")
 	})
 
 	t.Run("qdrant env store", func(t *testing.T) {
@@ -126,10 +139,44 @@ func TestBuildEnvVectorStores(t *testing.T) {
 		assert.Equal(t, "milvus:19530", stores[0].ConnectionConfig.Addr)
 	})
 
+	t.Run("tencent vectordb env store", func(t *testing.T) {
+		stores := BuildEnvVectorStores("tencent_vectordb", lookup)
+		require.Len(t, stores, 1)
+		assert.Equal(t, "http://tencent-vdb", stores[0].ConnectionConfig.Addr)
+		assert.Equal(t, "root", stores[0].ConnectionConfig.Username)
+		assert.Equal(t, "vdb-key", stores[0].ConnectionConfig.APIKey)
+		assert.Equal(t, "weknora", stores[0].ConnectionConfig.Database)
+		assert.Equal(t, "weknora_embeddings", stores[0].IndexConfig.CollectionName)
+	})
+
 	t.Run("weaviate env store", func(t *testing.T) {
 		stores := BuildEnvVectorStores("weaviate", lookup)
 		require.Len(t, stores, 1)
 		assert.Equal(t, "weaviate:8080", stores[0].ConnectionConfig.Host)
+	})
+
+	t.Run("doris env store", func(t *testing.T) {
+		stores := BuildEnvVectorStores("doris", lookup)
+		require.Len(t, stores, 1)
+		assert.Equal(t, "__env_doris__", stores[0].ID)
+		assert.Equal(t, DorisRetrieverEngineType, stores[0].EngineType)
+		assert.Equal(t, "doris-fe:9030", stores[0].ConnectionConfig.Addr)
+		assert.Equal(t, 8030, stores[0].ConnectionConfig.HTTPPort)
+		assert.Equal(t, "weknora", stores[0].ConnectionConfig.Database)
+		assert.Equal(t, "root", stores[0].ConnectionConfig.Username)
+		assert.Equal(t, "doris-pass", stores[0].ConnectionConfig.Password)
+		assert.Equal(t, "weknora_embeddings", stores[0].IndexConfig.CollectionPrefix)
+	})
+
+	t.Run("doris env store handles invalid http port gracefully", func(t *testing.T) {
+		bad := mockEnvLookup(map[string]string{
+			"DORIS_ADDR":      "doris-fe:9030",
+			"DORIS_HTTP_PORT": "not-a-number",
+			"DORIS_DATABASE":  "weknora",
+		})
+		stores := BuildEnvVectorStores("doris", bad)
+		require.Len(t, stores, 1)
+		assert.Equal(t, 0, stores[0].ConnectionConfig.HTTPPort) // falls back to 0 (factory will default to 8030)
 	})
 }
 
@@ -198,8 +245,8 @@ func TestNewVectorStoreResponse(t *testing.T) {
 func TestGetVectorStoreTypes(t *testing.T) {
 	types := GetVectorStoreTypes()
 
-	t.Run("returns 4 engine types (excludes postgres and sqlite)", func(t *testing.T) {
-		assert.Len(t, types, 4)
+	t.Run("returns supported external engine types (excludes postgres and sqlite)", func(t *testing.T) {
+		assert.Len(t, types, 6)
 	})
 
 	t.Run("type names match engine constants", func(t *testing.T) {
@@ -210,9 +257,32 @@ func TestGetVectorStoreTypes(t *testing.T) {
 		assert.Contains(t, typeNames, "elasticsearch")
 		assert.Contains(t, typeNames, "qdrant")
 		assert.Contains(t, typeNames, "milvus")
+		assert.Contains(t, typeNames, "tencent_vectordb")
 		assert.Contains(t, typeNames, "weaviate")
+		assert.Contains(t, typeNames, "doris")
 		assert.NotContains(t, typeNames, "postgres")
 		assert.NotContains(t, typeNames, "sqlite")
+	})
+
+	t.Run("doris has connection and index fields", func(t *testing.T) {
+		var dorisType VectorStoreTypeInfo
+		for _, typ := range types {
+			if typ.Type == "doris" {
+				dorisType = typ
+				break
+			}
+		}
+		require.NotEmpty(t, dorisType.ConnectionFields)
+		require.NotEmpty(t, dorisType.IndexFields)
+
+		// addr and database are required
+		seen := map[string]VectorStoreFieldInfo{}
+		for _, f := range dorisType.ConnectionFields {
+			seen[f.Name] = f
+		}
+		assert.True(t, seen["addr"].Required)
+		assert.True(t, seen["database"].Required)
+		assert.True(t, seen["password"].Sensitive)
 	})
 
 	t.Run("elasticsearch has connection and index fields", func(t *testing.T) {
@@ -316,6 +386,7 @@ func TestIsValidEngineType(t *testing.T) {
 		MilvusRetrieverEngineType,
 		WeaviateRetrieverEngineType,
 		SQLiteRetrieverEngineType,
+		TencentVectorDBRetrieverEngineType,
 	}
 	for _, et := range validTypes {
 		t.Run("valid: "+string(et), func(t *testing.T) {
@@ -604,6 +675,19 @@ func TestIndexConfig_GetIndexNameOrDefault(t *testing.T) {
 			name:       "milvus default",
 			config:     IndexConfig{},
 			engineType: MilvusRetrieverEngineType,
+			expected:   "weknora_embeddings",
+		},
+		// Tencent VectorDB
+		{
+			name:       "tencent vectordb with custom collection name",
+			config:     IndexConfig{CollectionName: "custom_collection"},
+			engineType: TencentVectorDBRetrieverEngineType,
+			expected:   "custom_collection",
+		},
+		{
+			name:       "tencent vectordb default",
+			config:     IndexConfig{},
+			engineType: TencentVectorDBRetrieverEngineType,
 			expected:   "weknora_embeddings",
 		},
 		// Weaviate
@@ -897,6 +981,35 @@ func TestValidateIndexConfig(t *testing.T) {
 		err := ValidateIndexConfig(ic)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "desired_shard_count")
+	})
+
+	t.Run("buckets_num exceeds max", func(t *testing.T) {
+		ic := IndexConfig{BucketsNum: 999}
+		err := ValidateIndexConfig(ic)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "buckets_num")
+	})
+
+	t.Run("buckets_num at max boundary is valid", func(t *testing.T) {
+		ic := IndexConfig{BucketsNum: 64}
+		assert.NoError(t, ValidateIndexConfig(ic))
+	})
+
+	t.Run("replication_num exceeds max", func(t *testing.T) {
+		ic := IndexConfig{ReplicationNum: 50}
+		err := ValidateIndexConfig(ic)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "replication_num")
+	})
+
+	t.Run("doris GetIndexNameOrDefault falls back when prefix empty", func(t *testing.T) {
+		ic := IndexConfig{}
+		assert.Equal(t, "weknora_embeddings", ic.GetIndexNameOrDefault(DorisRetrieverEngineType))
+	})
+
+	t.Run("doris GetIndexNameOrDefault honors collection_prefix", func(t *testing.T) {
+		ic := IndexConfig{CollectionPrefix: "custom_prefix"}
+		assert.Equal(t, "custom_prefix", ic.GetIndexNameOrDefault(DorisRetrieverEngineType))
 	})
 }
 

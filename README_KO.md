@@ -18,11 +18,17 @@
     <a href="https://chatbot.weixin.qq.com" target="_blank">
         <img alt="WeChat 대화 오픈 플랫폼" src="https://img.shields.io/badge/WeChat_대화_오픈_플랫폼-5ac725">
     </a>
+    <a href="https://chromewebstore.google.com/detail/jpemjbopikggjlmikmclgbmkhhopjdgd" target="_blank">
+        <img alt="Chrome 확장 프로그램" src="https://img.shields.io/badge/Chrome_확장_프로그램-WeKnora-4285F4">
+    </a>
+    <a href="https://clawhub.ai/lyingbug/weknora" target="_blank">
+        <img alt="ClawHub Skill" src="https://img.shields.io/badge/ClawHub_Skill-WeKnora-ff6b35">
+    </a>
     <a href="https://github.com/Tencent/WeKnora/blob/main/LICENSE">
         <img src="https://img.shields.io/badge/License-MIT-ffffff?labelColor=d4eaf7&color=2e6cc4" alt="License">
     </a>
     <a href="./CHANGELOG.md">
-        <img alt="버전" src="https://img.shields.io/badge/version-0.5.0-2e6cc4?labelColor=d4eaf7">
+        <img alt="버전" src="https://img.shields.io/badge/version-0.5.2-2e6cc4?labelColor=d4eaf7">
     </a>
 </p>
 
@@ -50,16 +56,18 @@ Feishu, Notion, Yuque 등 외부 플랫폼에서 지식 자동 동기화를 지�
 
 ## ✨ 최신 업데이트
 
-**v0.5.0 하이라이트:**
+**v0.5.2 하이라이트:**
 
-- **Wiki 모드**: Agent 기반의 새로운 Wiki 지식 체계를 도입했습니다. 원본 문서에서 상호 연결된 마크다운 페이지를 자동으로 정리·생성하고, 전용 Wiki 브라우저와 함께 페이지 간 참조 및 연관 관계를 시각화하는 인터랙티브 지식 그래프를 제공하여, 팀 전용으로 구조화되고 지속적으로 진화하는 지식 베이스를 구축할 수 있도록 돕습니다.
-- **관측 가능성(Observability)**: Langfuse를 통합하여 Agent의 ReAct 루프, LLM 토큰 추적, 도구 호출 및 asynq 파이프라인을 심층적으로 추적하여 Agent 추론 및 시스템 성능을 완벽하게 파악할 수 있습니다.
-- **사용자 정의 인덱싱 전략**: 사용자는 이제 지식베이스 수준에서 벡터 검색, 키워드 검색(하이브리드), Wiki 및 지식 그래프(Knowledge Graph) 인덱싱을 독립적으로 설정하고 전환할 수 있습니다.
-- **벡터 데이터베이스 UI 및 지식베이스 바인딩**: 연결 테스트가 포함된 벡터 데이터베이스 관리를 위한 프론트엔드 UI가 추가되었으며, 특정 지식베이스에 고유한 벡터 데이터베이스를 바인딩할 수 있는 기능이 지원됩니다.
-- **Yuque 커넥터**: API 클라이언트를 통한 Yuque 데이터 소스 통합으로 전체 및 증분 동기화를 지원하여 Yuque 문서를 원활하게 가져옵니다.
-- **Agent 기능 강화**: 잘못된 JSON 출력을 자동으로 수정하는 `json_repair` 도구가 추가되었으며, `OpenMAIC Classroom` 스킬이 사전 탑재되고, DuckDB 데이터 분석에서 Excel의 모든 시트를 로드하도록 지원이 강화되었습니다.
-- **프론트엔드 및 디버깅**: 설정의 모델 카드에 복사 작업이 추가되었으며, 모든 모델 프로바이더에 걸쳐 LLM 요청 디버깅(`llm_debug`) 및 로깅 메커니즘이 크게 향상되었습니다.
-- **버그 수정**: DuckDB 액세스 문제 수정(지식 파일을 임시 경로에 구체화), Wiki 전용 Agent의 Rerank 모델 요구 사항 제거, dockerignore에 오프라인 protoc zip 패키지 허용 목록 추가.
+- **Wiki 모드 대규모 확장**: Wiki 인제스트가 일반 작업 큐 + 데드레터 큐로 만 건 규모 KB까지 확장; 페이지 링크 그래프에 서브그래프 API + 인터랙티브 탐색 UI 추가.
+- **MCP 도구 Human-in-the-Loop 승인**: 민감한 MCP 도구 호출은 Agent를 일시정지시키고 채팅 UI에서 사용자의 명시 승인을 대기.
+- **새 LLM / 벡터 DB / 스토리지 / 웹 검색**: Anthropic(Claude), Apache Doris 4.1, Tencent VectorDB, Kingsoft Cloud KS3, SearXNG를 새 백엔드로 추가. Vector Store 관리 UI 및 KB별 인덱싱 전략 토글과 함께 사용 가능.
+- **관측 가능성 심화**: Langfuse Span을 retrieval / rerank / agent 단계로 확장; 채팅 스트림 양쪽에서 end-to-end TTFB 기록; LLM 호출 폴백 타임아웃 강화로 worker 풀 영구 차단 방지.
+- **적응형 3단계 청킹**: 헤딩 인식 / 휴리스틱 / 재귀 전략으로 자동 라우팅; KB 에디터에 실시간 미리보기 패널 내장. 자세한 내용은 [`docs/CHUNKING.md`](./docs/CHUNKING.md).
+- **글로벌 명령 팔레트**: ⌘K 팔레트가 독립 검색 페이지를 대체, 결과에서 바로 새 채팅을 시작 가능.
+- **데이터 소스와 모바일**: Yuque 커넥터(전체 + 증분 동기화) 추가, 경량 WeChat 미니프로그램을 `miniprogram/` 에 포함.
+- **`weknora` CLI(프리뷰)**: `cli/` 에 공식 명령줄 클라이언트의 초기 버전 포함, 피드백 환영.
+- **기타 개선**: 테넌트별 RRF 튜닝; 쿼리 이해 전용 모델; KB 일괄 관리; 사용자 단위 세션 고정과 키워드 검색; 테넌트 전체 IM 채널 개요; 사용자별 저장되는 글꼴 / 테마 설정; 새로운 OpenMaiC 마이크로 클래스룸 Agent 스킬; API 문서 / Swagger / Client SDK 전면 정비.
+- **버그 수정**: Embedder가 연결 실패 시 `(nil, nil)` 을 반환해 SIGSEGV를 유발하던 문제 수정; Mimo / DeepSeek 계열 `reasoning_content` 라운드트립 복원; Agent 다중 턴 히스토리를 DB에서 재구성(첨부 replay 포함); OIDC 로그인 수정; Wiki 인제스트 신뢰성 다수 개선; 빈 PDF에서 파일명으로 요약을 환각하지 않도록 수정.
 
 <details>
 <summary><b>이전 릴리스</b></summary>
@@ -234,19 +242,19 @@ Feishu, Notion, Yuque 등 외부 플랫폼에서 지식 자동 동기화를 지�
 
 | 기능 | 상세 |
 |------|------|
-| LLM | OpenAI / Azure OpenAI / DeepSeek / Qwen (Alibaba Cloud) / Zhipu / Hunyuan / Doubao (Volcengine) / Gemini / MiniMax / NVIDIA / Novita AI / SiliconFlow / OpenRouter / Ollama |
+| LLM | OpenAI / Azure OpenAI / Anthropic (Claude) / DeepSeek / Qwen (Alibaba Cloud) / Zhipu / Hunyuan / Doubao (Volcengine) / Gemini / MiniMax / NVIDIA / Novita AI / SiliconFlow / OpenRouter / Ollama |
 | Embedding | Ollama / BGE / GTE / OpenAI 호환 API |
-| 벡터 DB | PostgreSQL (pgvector) / Elasticsearch / Milvus / Weaviate / Qdrant |
-| 오브젝트 스토리지 | 로컬 / MinIO / AWS S3 / Volcengine TOS / Alibaba Cloud OSS |
+| 벡터 DB | PostgreSQL (pgvector) / Elasticsearch / Milvus / Weaviate / Qdrant / Apache Doris / Tencent VectorDB |
+| 오브젝트 스토리지 | 로컬 / MinIO / AWS S3 / Volcengine TOS / Alibaba Cloud OSS / Kingsoft Cloud KS3 |
 | IM 통합 | WeChat Work / Feishu / Slack / Telegram / DingTalk / Mattermost / WeChat |
-| 웹 검색 | DuckDuckGo / Bing / Google / Tavily / Baidu / Ollama |
+| 웹 검색 | DuckDuckGo / Bing / Google / Tavily / Baidu / Ollama / SearXNG |
 
 **플랫폼**
 
 | 기능 | 상세 |
 |------|------|
 | 배포 | 로컬 / Docker / Kubernetes (Helm), 프라이빗/오프라인 배포 지원 |
-| UI | Web UI / RESTful API / Chrome Extension |
+| UI | Web UI / RESTful API / CLI (`weknora`) / Chrome Extension / WeChat 미니 프로그램 |
 | 관측 가능성 | ReAct 루프, 토큰 소비, 도구 호출, 파이프라인 추적을 위한 Langfuse 통합 |
 | 작업 관리 | MQ 비동기 작업, 버전 업그레이드 시 자동 DB 마이그레이션 |
 | 모델 관리 | 중앙 설정, 지식베이스별 모델 선택, 멀티테넌트 내장 모델 공유, WeKnora Cloud 호스팅 모델 및 문서 파싱 |

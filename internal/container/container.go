@@ -20,6 +20,7 @@ import (
 	_ "github.com/duckdb/duckdb-go/v2"
 	esv7 "github.com/elastic/go-elasticsearch/v7"
 	"github.com/elastic/go-elasticsearch/v8"
+	_ "github.com/go-sql-driver/mysql" // 给 Doris (database/sql) 注册 MySQL 协议驱动
 	"github.com/milvus-io/milvus/client/v2/milvusclient"
 	"github.com/neo4j/neo4j-go-driver/v6/neo4j"
 	"github.com/panjf2000/ants/v2"
@@ -31,8 +32,10 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	"github.com/Tencent/WeKnora/internal/agent/approval"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	memoryRepo "github.com/Tencent/WeKnora/internal/application/repository/memory/neo4j"
+	dorisRepo "github.com/Tencent/WeKnora/internal/application/repository/retriever/doris"
 	elasticsearchRepoV7 "github.com/Tencent/WeKnora/internal/application/repository/retriever/elasticsearch/v7"
 	elasticsearchRepoV8 "github.com/Tencent/WeKnora/internal/application/repository/retriever/elasticsearch/v8"
 	milvusRepo "github.com/Tencent/WeKnora/internal/application/repository/retriever/milvus"
@@ -40,11 +43,11 @@ import (
 	postgresRepo "github.com/Tencent/WeKnora/internal/application/repository/retriever/postgres"
 	qdrantRepo "github.com/Tencent/WeKnora/internal/application/repository/retriever/qdrant"
 	sqliteRetrieverRepo "github.com/Tencent/WeKnora/internal/application/repository/retriever/sqlite"
+	tencentVectorDBRepo "github.com/Tencent/WeKnora/internal/application/repository/retriever/tencentvectordb"
 	weaviateRepo "github.com/Tencent/WeKnora/internal/application/repository/retriever/weaviate"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	chatpipeline "github.com/Tencent/WeKnora/internal/application/service/chat_pipeline"
 	"github.com/Tencent/WeKnora/internal/application/service/file"
-	"github.com/Tencent/WeKnora/internal/application/service/llmcontext"
 	memoryService "github.com/Tencent/WeKnora/internal/application/service/memory"
 	"github.com/Tencent/WeKnora/internal/application/service/retriever"
 	"github.com/Tencent/WeKnora/internal/config"
@@ -76,6 +79,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/tencent/vectordatabase-sdk-go/tcvectordb"
 	"github.com/weaviate/weaviate-go-client/v5/weaviate"
 	"github.com/weaviate/weaviate-go-client/v5/weaviate/auth"
 	wgrpc "github.com/weaviate/weaviate-go-client/v5/weaviate/grpc"
@@ -105,7 +109,6 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(initFileService))
 	must(container.Provide(initRedisClient))
 	must(container.Provide(initAntsPool))
-	must(container.Provide(initContextStorage))
 
 	// Register tracer cleanup handler (tracer needs to be available for cleanup registration)
 	must(container.Invoke(registerTracerCleanup))
@@ -144,6 +147,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(neo4jRepo.NewNeo4jRepository))
 	must(container.Provide(memoryRepo.NewMemoryRepository))
 	must(container.Provide(repository.NewMCPServiceRepository))
+	must(container.Provide(repository.NewMCPToolApprovalRepository))
 	must(container.Provide(repository.NewCustomAgentRepository))
 	must(container.Provide(repository.NewOrganizationRepository))
 	must(container.Provide(repository.NewKBShareRepository))
@@ -153,6 +157,9 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(repository.NewDataSourceRepository))
 	must(container.Provide(repository.NewSyncLogRepository))
 	must(container.Provide(repository.NewWikiPageRepository))
+	must(container.Provide(repository.NewWikiLogEntryRepository))
+	must(container.Provide(repository.NewTaskPendingOpsRepository))
+	must(container.Provide(repository.NewTaskDeadLetterRepository))
 
 	// MCP manager for managing MCP client connections
 	logger.Debugf(ctx, "[Container] Registering MCP manager...")
@@ -183,9 +190,11 @@ func BuildContainer(container *dig.Container) *dig.Container {
 
 	must(container.Provide(service.NewMessageService))
 	must(container.Provide(service.NewMCPServiceService))
+	must(container.Provide(service.NewMCPToolApprovalService))
 	must(container.Provide(service.NewCustomAgentService))
 	must(container.Provide(memoryService.NewMemoryService))
 	must(container.Provide(service.NewWikiPageService))
+	must(container.Provide(service.NewWikiLogEntryService))
 	must(container.Provide(service.NewWikiIngestService, dig.Name("wikiIngest")))
 	must(container.Provide(service.NewWikiLintService))
 
@@ -195,6 +204,9 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Invoke(registerWebSearchProviders))
 	must(container.Provide(repository.NewWebSearchProviderRepository))
 	must(container.Provide(repository.NewVectorStoreRepository))
+	// TenantStoreOwnership adapter used by the retriever factory functions
+	// to verify that a resolved VectorStore belongs to the caller's tenant.
+	must(container.Provide(retriever.NewVectorStoreRepoOwnership))
 	must(container.Provide(service.NewWebSearchService))
 	must(container.Provide(service.NewWebSearchProviderService))
 	must(container.Provide(NewEngineFactory))
@@ -213,6 +225,11 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// SessionService is passed as parameter to CreateAgentEngine method when creating AgentService
 	logger.Debugf(ctx, "[Container] Registering event bus and agent service...")
 	must(container.Provide(event.NewEventBus))
+	must(container.Provide(func(cfg *config.Config, s interfaces.MCPToolApprovalService, rdb *redis.Client) *approval.Gate {
+		return approval.NewGate(cfg, &approval.Adapter{Svc: s}, rdb)
+	}))
+	// Expose Gate as MCPApproval interface so AgentService and others can depend on the abstraction.
+	must(container.Provide(func(g *approval.Gate) approval.MCPApproval { return g }))
 	must(container.Provide(service.NewAgentService))
 
 	// Session service (depends on agent service)
@@ -364,18 +381,6 @@ func initRedisClient() (*redis.Client, error) {
 	}
 
 	return client, nil
-}
-
-func initContextStorage(redisClient *redis.Client) (llmcontext.ContextStorage, error) {
-	if redisClient == nil {
-		logger.Infof(context.Background(), "[ContextStorage] Redis not available, using in-memory storage")
-		return llmcontext.NewMemoryStorage(), nil
-	}
-	storage, err := llmcontext.NewRedisStorage(redisClient, 24*time.Hour, "context:")
-	if err != nil {
-		return nil, err
-	}
-	return storage, nil
 }
 
 // initDatabase initializes database connection
@@ -952,6 +957,84 @@ func initRetrieveEngineRegistry(db *gorm.DB, cfg *config.Config) (interfaces.Ret
 			}
 		}
 	}
+	if slices.Contains(retrieveDriver, "doris") {
+		dorisAddr := os.Getenv("DORIS_ADDR")
+		if dorisAddr == "" {
+			// docker-compose 默认服务名 + Doris FE MySQL 端口
+			dorisAddr = "doris-fe:9030"
+		}
+		dorisDatabase := os.Getenv("DORIS_DATABASE")
+		if dorisDatabase == "" {
+			dorisDatabase = "weknora"
+		}
+		dorisUsername := os.Getenv("DORIS_USERNAME")
+		if dorisUsername == "" {
+			dorisUsername = "root"
+		}
+		dorisPassword := os.Getenv("DORIS_PASSWORD")
+		dorisHTTPPort := 8030
+		if portStr := os.Getenv("DORIS_HTTP_PORT"); portStr != "" {
+			if port, err := strconv.Atoi(portStr); err == nil {
+				dorisHTTPPort = port
+			}
+		}
+
+		dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8mb4&parseTime=true&loc=Local",
+			dorisUsername, dorisPassword, dorisAddr, dorisDatabase)
+		dorisDB, err := sql.Open("mysql", dsn)
+		if err != nil {
+			log.Errorf("Create doris client failed: %v", err)
+		} else {
+			dorisDB.SetMaxOpenConns(20)
+			dorisDB.SetMaxIdleConns(5)
+			dorisDB.SetConnMaxLifetime(time.Hour)
+
+			httpBase := "http://" + hostFromAddr(dorisAddr) + ":" + strconv.Itoa(dorisHTTPPort)
+			dorisRepository := dorisRepo.NewDorisRetrieveEngineRepository(
+				dorisDB, httpBase, dorisUsername, dorisPassword, dorisDatabase, nil,
+			)
+			if err := registry.Register(
+				retriever.NewKVHybridRetrieveEngine(
+					dorisRepository, types.DorisRetrieverEngineType,
+				),
+			); err != nil {
+				log.Errorf("Register doris retrieve engine failed: %v", err)
+			} else {
+				log.Infof("Register doris retrieve engine success: %s db=%s", dorisAddr, dorisDatabase)
+			}
+		}
+	}
+	if slices.Contains(retrieveDriver, "tencent_vectordb") {
+		addr := os.Getenv("TENCENT_VECTORDB_ADDR")
+		username := os.Getenv("TENCENT_VECTORDB_USERNAME")
+		apiKey := os.Getenv("TENCENT_VECTORDB_API_KEY")
+		if addr == "" || username == "" || apiKey == "" {
+			log.Errorf("Missing Tencent VectorDB configuration")
+		} else {
+			client, err := tcvectordb.NewRpcClient(addr, username, apiKey, &tcvectordb.ClientOption{
+				ReadConsistency: tcvectordb.EventualConsistency,
+				Timeout:         10 * time.Second,
+			})
+			if err != nil {
+				log.Errorf("Create tencent_vectordb client failed: %v", err)
+			} else {
+				tencentRepository := tencentVectorDBRepo.NewTencentVectorDBRetrieveEngineRepository(
+					client,
+					os.Getenv("TENCENT_VECTORDB_DATABASE"),
+					nil,
+				)
+				if err := registry.Register(
+					retriever.NewKVHybridRetrieveEngine(
+						tencentRepository, types.TencentVectorDBRetrieverEngineType,
+					),
+				); err != nil {
+					log.Errorf("Register tencent_vectordb retrieve engine failed: %v", err)
+				} else {
+					log.Infof("Register tencent_vectordb retrieve engine success")
+				}
+			}
+		}
+	}
 	// ─── DB store registration (byStoreID) ───
 	if storeReg, ok := registry.(*retriever.RetrieveEngineRegistry); ok {
 		loadDBStoresIntoRegistry(storeReg, db, cfg)
@@ -1159,6 +1242,7 @@ func registerWebSearchProviders(registry *infra_web_search.Registry) {
 	registry.Register("tavily", infra_web_search.NewTavilyProvider)
 	registry.Register("ollama", infra_web_search.NewOllamaProvider)
 	registry.Register("baidu", infra_web_search.NewBaiduProvider)
+	registry.Register("searxng", infra_web_search.NewSearxngProvider)
 }
 
 // registerIMAdapterFactories registers adapter factories for each IM platform

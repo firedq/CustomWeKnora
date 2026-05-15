@@ -158,7 +158,7 @@ type CustomAgentConfig struct {
 	AudioUploadEnabled bool `yaml:"audio_upload_enabled" json:"audio_upload_enabled"`
 	// ASR model ID for audio transcription (optional)
 	ASRModelID string `yaml:"asr_model_id" json:"asr_model_id"`
-	// Storage provider for image uploads: "local", "minio", "cos", "tos"
+	// Storage provider for image uploads: "local", "minio", "cos", "tos", "s3", "oss", "ks3".
 	// Empty means use the global/tenant default provider.
 	ImageStorageProvider string `yaml:"image_storage_provider" json:"image_storage_provider"`
 
@@ -167,6 +167,13 @@ type CustomAgentConfig struct {
 	// Empty means all file types are supported
 	// When set, only files with matching extensions can be used with this agent
 	SupportedFileTypes []string `yaml:"supported_file_types" json:"supported_file_types"`
+
+	// ===== Data Analysis Settings =====
+	// Whether to run the legacy in-pipeline DuckDB SQL data-analysis stage when
+	// the retrieved chunks include CSV/Excel files. This issues an extra LLM
+	// call to generate a SQL query and is disabled by default because most
+	// quick-answer / RAG-style agents do not want the added latency.
+	DataAnalysisEnabled bool `yaml:"data_analysis_enabled" json:"data_analysis_enabled"`
 
 	// ===== FAQ Strategy Settings =====
 	// Whether FAQ priority strategy is enabled (FAQ answers prioritized over document chunks)
@@ -216,6 +223,9 @@ type CustomAgentConfig struct {
 	RewritePromptSystem string `yaml:"rewrite_prompt_system" json:"rewrite_prompt_system"`
 	// Rewrite prompt user message template
 	RewritePromptUser string `yaml:"rewrite_prompt_user" json:"rewrite_prompt_user"`
+	// Dedicated chat model ID for the query-understanding (rewrite + intent) step.
+	// When empty, the main conversation ModelID is used as a fallback.
+	QueryUnderstandModelID string `yaml:"query_understand_model_id" json:"query_understand_model_id,omitempty"`
 	// Fallback strategy: "fixed" for fixed response, "model" for model generation
 	FallbackStrategy string `yaml:"fallback_strategy" json:"fallback_strategy"`
 	// Fixed fallback response (when FallbackStrategy is "fixed")
