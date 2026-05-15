@@ -56,3 +56,12 @@ fix-docker.sh
 
 # WeChat Mini Program local/private configuration
 miniprogram/project.private.config.json
+
+
+/.graphify_chunk_0.txt
+/.graphify_chunk_1.txt
+/.graphify_chunk_2.txt
+/.graphify_chunk_3.txt
+/graphify-out/
+/examples/tencentcloud-speech-sdk-python/
+.graphify*
