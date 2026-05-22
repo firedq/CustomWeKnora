@@ -1410,6 +1410,8 @@ export default {
       // 检索策略
       retrievalStrategy: "检索策略",
       embeddingTopK: "向量召回数量",
+      multiRouteRetrieval: "RAG + Neo4j + Wiki 多路召回",
+      wikiRecallTopK: "Wiki 召回数量",
       keywordThreshold: "关键词阈值",
       vectorThreshold: "向量阈值",
       rerankTopK: "重排数量",
@@ -3821,6 +3823,8 @@ export default {
       retrievalSection: "配置知识库检索和排序的参数",
       queryExpansion: "自动扩展查询词以提高召回率",
       embeddingTopK: "向量检索返回的最大结果数量",
+      multiRouteRetrieval: "启用后，快速问答模式会在分块 RAG、Neo4j 知识图谱和 Wiki 页面之间并行召回，再合并去重后进入重排。",
+      wikiRecallTopK: "每个知识库参与多路召回的 Wiki 页面候选数量，范围 1-20。",
       keywordThreshold: "关键词检索的最低相关性分数",
       vectorThreshold: "向量检索的最低相似度分数",
       rerankTopK: "重排序后保留的最大结果数量",

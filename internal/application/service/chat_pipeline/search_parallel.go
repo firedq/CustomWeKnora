@@ -9,7 +9,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
-// PluginSearchParallel implements parallel search functionality combining chunk search and entity search
+// PluginSearchParallel implements parallel search functionality combining chunk, entity and optional wiki search.
 type PluginSearchParallel struct {
 	// Chunk search dependencies
 	knowledgeBaseService interfaces.KnowledgeBaseService
@@ -24,9 +24,13 @@ type PluginSearchParallel struct {
 	chunkRepo     interfaces.ChunkRepository
 	knowledgeRepo interfaces.KnowledgeRepository
 
+	// Wiki search dependencies
+	wikiPageService interfaces.WikiPageService
+
 	// Internal plugins
 	searchPlugin       *PluginSearch
 	searchEntityPlugin *PluginSearchEntity
+	searchWikiPlugin   *PluginSearchWiki
 }
 
 // NewPluginSearchParallel creates a new parallel search plugin
@@ -44,6 +48,7 @@ func NewPluginSearchParallel(
 	graphRepository interfaces.RetrieveGraphRepository,
 	chunkRepository interfaces.ChunkRepository,
 	knowledgeRepository interfaces.KnowledgeRepository,
+	wikiPageService interfaces.WikiPageService,
 ) *PluginSearchParallel {
 	// Create internal plugins without registering them
 	searchPlugin := &PluginSearch{
@@ -64,6 +69,12 @@ func NewPluginSearchParallel(
 		knowledgeRepo: knowledgeRepository,
 	}
 
+	searchWikiPlugin := NewPluginSearchWiki(
+		wikiPageService,
+		chunkRepository,
+		knowledgeRepository,
+	)
+
 	res := &PluginSearchParallel{
 		knowledgeBaseService: knowledgeBaseService,
 		knowledgeService:     knowledgeService,
@@ -74,8 +85,10 @@ func NewPluginSearchParallel(
 		graphRepo:            graphRepository,
 		chunkRepo:            chunkRepository,
 		knowledgeRepo:        knowledgeRepository,
+		wikiPageService:      wikiPageService,
 		searchPlugin:         searchPlugin,
 		searchEntityPlugin:   searchEntityPlugin,
+		searchWikiPlugin:     searchWikiPlugin,
 	}
 	eventManager.Register(res)
 	return res
@@ -110,6 +123,8 @@ func (p *PluginSearchParallel) OnEvent(ctx context.Context,
 	chunkCM.SearchResult = nil
 	entityCM := chatManage.Clone()
 	entityCM.SearchResult = nil
+	wikiCM := chatManage.Clone()
+	wikiCM.SearchResult = nil
 
 	noop := func() *PluginError { return nil }
 
@@ -149,12 +164,34 @@ func (p *PluginSearchParallel) OnEvent(ctx context.Context,
 			},
 		},
 	}
+	if chatManage.MultiRouteRetrievalEnabled && p.searchWikiPlugin != nil {
+		tasks = append(tasks, ParallelTask{
+			Name: "wiki_search",
+			Run: func() *PluginError {
+				err := p.searchWikiPlugin.OnEvent(ctx, types.CHUNK_SEARCH, wikiCM, noop)
+				pipelineInfo(ctx, "SearchParallel", "wiki_search_done", map[string]interface{}{
+					"enabled":      chatManage.MultiRouteRetrievalEnabled,
+					"result_count": len(wikiCM.SearchResult),
+					"has_error":    err != nil && err != ErrSearchNothing,
+				})
+				if err == ErrSearchNothing {
+					return nil
+				}
+				return err
+			},
+		})
+	} else {
+		pipelineInfo(ctx, "SearchParallel", "wiki_search_skip", map[string]interface{}{
+			"enabled": chatManage.MultiRouteRetrievalEnabled,
+		})
+	}
 
 	errs := RunParallel(tasks...)
 
-	// Merge results from both searches
-	chatManage.SearchResult = append(chunkCM.SearchResult, entityCM.SearchResult...)
+	chatManage.SearchResult = append([]*types.SearchResult{}, chunkCM.SearchResult...)
+	chatManage.SearchResult = append(chatManage.SearchResult, entityCM.SearchResult...)
 	chatManage.SearchResult = removeDuplicateResults(chatManage.SearchResult)
+	chatManage.SearchResult = appendWikiSearchResults(chatManage.SearchResult, wikiCM.SearchResult)
 
 	for name, err := range errs {
 		logger.Warnf(ctx, "[SearchParallel] %s error: %v", name, err.Err)
@@ -164,6 +201,7 @@ func (p *PluginSearchParallel) OnEvent(ctx context.Context,
 		"session_id":     chatManage.SessionID,
 		"chunk_results":  len(chunkCM.SearchResult),
 		"entity_results": len(entityCM.SearchResult),
+		"wiki_results":   len(wikiCM.SearchResult),
 		"total_results":  len(chatManage.SearchResult),
 		"error_count":    len(errs),
 	})

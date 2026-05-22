@@ -71,6 +71,8 @@ export interface CustomAgentConfig {
 
   // ===== 检索策略设置 =====
   embedding_top_k?: number;         // 向量召回TopK
+  multi_route_retrieval_enabled?: boolean; // 是否启用 RAG + Neo4j + Wiki 多路召回（普通/快速问答模式）
+  wiki_recall_top_k?: number;       // Wiki 召回候选数量
   keyword_threshold?: number;       // 关键词召回阈值
   vector_threshold?: number;        // 向量召回阈值
   rerank_top_k?: number;            // 重排TopK
@@ -218,6 +220,8 @@ export interface AgentTypePresetConfig {
   allowed_tools?: string[];
   retain_retrieval_history?: boolean;
   faq_priority_enabled?: boolean;
+  multi_route_retrieval_enabled?: boolean;
+  wiki_recall_top_k?: number;
   web_search_enabled?: boolean;
   supported_file_types?: string[];
   kb_selection_mode?: 'all' | 'selected' | 'none';

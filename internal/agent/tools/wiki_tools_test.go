@@ -1,8 +1,33 @@
 package tools
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
+
+	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
+
+type tenantCaptureWikiService struct {
+	interfaces.WikiPageService
+	tenants []uint64
+}
+
+func (s *tenantCaptureWikiService) SearchPages(ctx context.Context, kbID string, query string, limit int) ([]*types.WikiPage, error) {
+	tenantID, _ := types.TenantIDFromContext(ctx)
+	s.tenants = append(s.tenants, tenantID)
+	return []*types.WikiPage{
+		{
+			ID:              "page-1",
+			TenantID:        tenantID,
+			KnowledgeBaseID: kbID,
+			Slug:            "concept/rag",
+			Title:           "RAG",
+			PageType:        types.WikiPageTypeConcept,
+		},
+	}, nil
+}
 
 func TestTruncateForSummary(t *testing.T) {
 	tests := []struct {
@@ -93,5 +118,22 @@ func TestWikiToolsInAvailableDefinitions(t *testing.T) {
 		if !found {
 			t.Errorf("Wiki tool %s missing from AvailableToolDefinitions()", name)
 		}
+	}
+}
+
+func TestWikiSearchToolUsesScopeTenant(t *testing.T) {
+	wikiService := &tenantCaptureWikiService{}
+	tool := NewWikiSearchTool(wikiService, []WikiScope{{KnowledgeBaseID: "kb-1", TenantID: 42}})
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
+
+	result, err := tool.Execute(ctx, json.RawMessage(`{"queries":["rag"],"limit":1}`))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if result == nil || !result.Success {
+		t.Fatalf("expected successful result, got %#v", result)
+	}
+	if len(wikiService.tenants) != 1 || wikiService.tenants[0] != 42 {
+		t.Fatalf("expected scope tenant 42, got %#v", wikiService.tenants)
 	}
 }

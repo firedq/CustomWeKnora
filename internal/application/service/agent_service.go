@@ -385,7 +385,7 @@ func (s *agentService) registerTools(
 			// When the user @mentioned specific documents, carry the document
 			// whitelist into the wiki scope so wiki_search / wiki_read_page
 			// only surface pages whose SourceRefs intersect the pinned docs.
-			scope := tools.WikiScope{KnowledgeBaseID: kb.ID}
+			scope := tools.WikiScope{KnowledgeBaseID: kb.ID, TenantID: target.TenantID}
 			if target.Type == types.SearchTargetTypeKnowledge && len(target.KnowledgeIDs) > 0 {
 				scope.KnowledgeIDs = append([]string(nil), target.KnowledgeIDs...)
 			}

@@ -1202,6 +1202,26 @@
                       </div>
                     </div>
 
+                    <div v-if="!isAgentMode" class="setting-row">
+                      <div class="setting-info">
+                        <label>{{ $t('agent.editor.multiRouteRetrieval') }}</label>
+                        <p class="desc">{{ $t('agentEditor.desc.multiRouteRetrieval') }}</p>
+                      </div>
+                      <div class="setting-control">
+                        <t-switch v-model="formData.config.multi_route_retrieval_enabled" />
+                      </div>
+                    </div>
+
+                    <div v-if="!isAgentMode && formData.config.multi_route_retrieval_enabled" class="setting-row">
+                      <div class="setting-info">
+                        <label>{{ $t('agent.editor.wikiRecallTopK') }}</label>
+                        <p class="desc">{{ $t('agentEditor.desc.wikiRecallTopK') }}</p>
+                      </div>
+                      <div class="setting-control">
+                        <t-input-number v-model="formData.config.wiki_recall_top_k" :min="1" :max="20" theme="column" />
+                      </div>
+                    </div>
+
                     <!-- 关键词阈值 -->
                     <div class="setting-row">
                       <div class="setting-info">
@@ -1894,6 +1914,8 @@ const defaultFormData = {
     history_turns: 5,
     // 检索策略设置
     embedding_top_k: 10,
+    multi_route_retrieval_enabled: false,
+    wiki_recall_top_k: 5,
     keyword_threshold: 0.3,
     vector_threshold: 0.5,
     rerank_top_k: 5,
@@ -2121,6 +2143,8 @@ const applyAgentTypePreset = (preset: AgentTypePreset | null) => {
   if (Array.isArray(c.allowed_tools)) target.allowed_tools = [...c.allowed_tools];
   if (typeof c.retain_retrieval_history === 'boolean') target.retain_retrieval_history = c.retain_retrieval_history;
   if (typeof c.faq_priority_enabled === 'boolean') target.faq_priority_enabled = c.faq_priority_enabled;
+  if (typeof c.multi_route_retrieval_enabled === 'boolean') target.multi_route_retrieval_enabled = c.multi_route_retrieval_enabled;
+  if (typeof c.wiki_recall_top_k === 'number') target.wiki_recall_top_k = c.wiki_recall_top_k;
   if (typeof c.web_search_enabled === 'boolean') target.web_search_enabled = c.web_search_enabled;
   // supported_file_types 采用"强同步"语义：只有 data-analysis 需要限定 csv/xlsx，
   // 其余类型切过来时必须清空，否则会从上一个类型带过来残留。

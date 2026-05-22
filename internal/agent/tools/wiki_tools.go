@@ -101,6 +101,7 @@ func renderIndexOverviewForAgent(resp *types.WikiIndexResponse) string {
 //     search to specific documents inside a KB.
 type WikiScope struct {
 	KnowledgeBaseID string
+	TenantID        uint64
 	KnowledgeIDs    []string
 }
 
@@ -320,7 +321,7 @@ func (t *wikiReadPageTool) Execute(ctx context.Context, args json.RawMessage) (*
 	// multiple KBs when the agent has several wiki KBs in scope.
 	foundKBs := make(map[string][]string)
 
-	formatLinks := func(slugs []string, kbID string) []string {
+	formatLinks := func(linkCtx context.Context, slugs []string, kbID string) []string {
 		var descs []string
 		for _, s := range slugs {
 			key := seenLinkKey(kbID, s)
@@ -333,7 +334,7 @@ func (t *wikiReadPageTool) Execute(ctx context.Context, args json.RawMessage) (*
 				// We already injected the summary for this link in this session (within the same KB)
 				descs = append(descs, fmt.Sprintf("[[%s]] (summary omitted, already seen)", s))
 			} else {
-				if linkPage, err := t.wikiService.GetPageBySlug(ctx, kbID, s); err == nil && linkPage != nil {
+				if linkPage, err := t.wikiService.GetPageBySlug(linkCtx, kbID, s); err == nil && linkPage != nil {
 					descs = append(descs, fmt.Sprintf("[[%s]] (%s)", s, linkPage.Summary))
 				} else {
 					descs = append(descs, fmt.Sprintf("[[%s]]", s))
@@ -346,9 +347,9 @@ func (t *wikiReadPageTool) Execute(ctx context.Context, args json.RawMessage) (*
 		return descs
 	}
 
-	renderPage := func(page *types.WikiPage, kbID string) string {
-		outLinksDesc := formatLinks(page.OutLinks, kbID)
-		inLinksDesc := formatLinks(page.InLinks, kbID)
+	renderPage := func(pageCtx context.Context, page *types.WikiPage, kbID string) string {
+		outLinksDesc := formatLinks(pageCtx, page.OutLinks, kbID)
+		inLinksDesc := formatLinks(pageCtx, page.InLinks, kbID)
 
 		// Render source refs
 		var sourcesDesc []string
@@ -379,7 +380,7 @@ func (t *wikiReadPageTool) Execute(ctx context.Context, args json.RawMessage) (*
 		// steers the model to wiki_search for deeper exploration.
 		contentBody := page.Content
 		if page.PageType == types.WikiPageTypeIndex {
-			if overview, err := t.wikiService.GetIndexView(ctx, kbID, nil, wikiIndexAgentTopK, ""); err == nil && overview != nil {
+			if overview, err := t.wikiService.GetIndexView(pageCtx, kbID, nil, wikiIndexAgentTopK, ""); err == nil && overview != nil {
 				contentBody = renderIndexOverviewForAgent(overview)
 			}
 		}
@@ -429,7 +430,11 @@ func (t *wikiReadPageTool) Execute(ctx context.Context, args json.RawMessage) (*
 			if kbID == "" {
 				continue
 			}
-			page, err := t.wikiService.GetPageBySlug(ctx, kbID, slug)
+			scopeCtx := ctx
+			if sc.TenantID != 0 {
+				scopeCtx = context.WithValue(ctx, types.TenantIDContextKey, sc.TenantID)
+			}
+			page, err := t.wikiService.GetPageBySlug(scopeCtx, kbID, slug)
 			if err != nil || page == nil {
 				continue
 			}
@@ -477,7 +482,11 @@ func (t *wikiReadPageTool) Execute(ctx context.Context, args json.RawMessage) (*
 		// specify a knowledge_base_id), emit all pages so the model can pick
 		// the right one or compare them explicitly.
 		for _, h := range hits {
-			outputs = append(outputs, renderPage(h.page, h.kbID))
+			pageCtx := ctx
+			if h.page.TenantID != 0 {
+				pageCtx = context.WithValue(ctx, types.TenantIDContextKey, h.page.TenantID)
+			}
+			outputs = append(outputs, renderPage(pageCtx, h.page, h.kbID))
 		}
 	}
 
@@ -618,7 +627,11 @@ func (t *wikiSearchTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 			}
 			allowed, hasFilter := scopeKnowledgeFilter(sc)
 
-			pages, err := t.wikiService.SearchPages(ctx, kbID, query, params.Limit)
+			searchCtx := ctx
+			if sc.TenantID != 0 {
+				searchCtx = context.WithValue(ctx, types.TenantIDContextKey, sc.TenantID)
+			}
+			pages, err := t.wikiService.SearchPages(searchCtx, kbID, query, params.Limit)
 			if err != nil {
 				continue
 			}

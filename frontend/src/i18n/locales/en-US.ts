@@ -534,6 +534,8 @@ export default {
       // Retrieval Strategy
       retrievalStrategy: 'Retrieval Strategy',
       embeddingTopK: 'Embedding Top K',
+      multiRouteRetrieval: 'RAG + Neo4j + Wiki Multi-route Retrieval',
+      wikiRecallTopK: 'Wiki Recall Top K',
       keywordThreshold: 'Keyword Threshold',
       vectorThreshold: 'Vector Threshold',
       rerankTopK: 'Rerank Top K',
@@ -3825,6 +3827,8 @@ export default {
       retrievalSection: 'Configure knowledge base retrieval and ranking parameters',
       queryExpansion: 'Automatically expand query terms to improve recall',
       embeddingTopK: 'Maximum number of results from vector retrieval',
+      multiRouteRetrieval: 'When enabled, Quick Answer mode recalls chunks, Neo4j graph evidence, and Wiki pages in parallel, then merges and reranks them.',
+      wikiRecallTopK: 'Number of Wiki page candidates recalled per knowledge base in multi-route retrieval, from 1 to 20.',
       keywordThreshold: 'Minimum relevance score for keyword retrieval',
       vectorThreshold: 'Minimum similarity score for vector retrieval',
       rerankTopK: 'Maximum number of results retained after reranking',

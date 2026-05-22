@@ -760,12 +760,17 @@ func (r *wikiPageRepository) Search(ctx context.Context, kbID string, query stri
 		"WHEN content ~* ? THEN 1 " +
 		"ELSE 0 END AS match_rank"
 
-	var pages []*types.WikiPage
-	if err := r.db.WithContext(ctx).
+	queryDB := r.db.WithContext(ctx).
 		Select("*, "+rankExpr, query, query, query, query).
 		Where("knowledge_base_id = ? AND (title ~* ? OR content ~* ? OR summary ~* ? OR slug ~* ?)",
 			kbID, query, query, query, query).
-		Where("status != ?", "archived").
+		Where("status != ?", "archived")
+	if tenantID, ok := types.TenantIDFromContext(ctx); ok && tenantID != 0 {
+		queryDB = queryDB.Where("tenant_id = ?", tenantID)
+	}
+
+	var pages []*types.WikiPage
+	if err := queryDB.
 		Order("match_rank DESC, updated_at DESC").
 		Limit(limit).
 		Find(&pages).Error; err != nil {

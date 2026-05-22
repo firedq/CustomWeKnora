@@ -213,6 +213,10 @@ type CustomAgentConfig struct {
 	RerankTopK int `yaml:"rerank_top_k" json:"rerank_top_k"`
 	// Rerank threshold
 	RerankThreshold float64 `yaml:"rerank_threshold" json:"rerank_threshold"`
+	// Whether to enable RAG + Neo4j + Wiki multi-route retrieval
+	MultiRouteRetrievalEnabled bool `yaml:"multi_route_retrieval_enabled" json:"multi_route_retrieval_enabled"`
+	// Wiki recall candidate count for multi-route retrieval
+	WikiRecallTopK int `yaml:"wiki_recall_top_k" json:"wiki_recall_top_k"`
 
 	// ===== Advanced Settings (mainly for normal mode) =====
 	// Whether to enable query expansion

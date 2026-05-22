@@ -154,6 +154,10 @@ func (s *sessionService) applyAgentOverridesToChatManage(
 	if customAgent.Config.RerankModelID != "" {
 		cm.RerankModelID = customAgent.Config.RerankModelID
 	}
+	cm.MultiRouteRetrievalEnabled = customAgent.Config.MultiRouteRetrievalEnabled
+	if customAgent.Config.WikiRecallTopK > 0 {
+		cm.WikiRecallTopK = customAgent.Config.WikiRecallTopK
+	}
 
 	// Override rewrite settings
 	cm.EnableRewrite = customAgent.Config.EnableRewrite
