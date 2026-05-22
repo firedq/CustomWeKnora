@@ -1,11 +1,55 @@
 import { get, post, put, del, postUpload, getDown } from "../../utils/request";
 
 // 知识库管理 API（列表、创建、获取、更新、删除、复制）
-export function listKnowledgeBases(params?: { agent_id?: string }) {
+export function listKnowledgeBases(params?: {
+  agent_id?: string;
+  /**
+   * Optional creator filter. Server-side semantics:
+   *   - "mine"   → only KBs whose creator_id matches the caller
+   *   - "others" → only KBs created by someone else in this tenant
+   *   - omitted/"all" → no filter
+   * KBs predating the RBAC backfill (creator_id="") never match
+   * mine/others — they fall out of both views by design.
+   */
+  creator?: 'all' | 'mine' | 'others';
+}) {
   const query = new URLSearchParams();
   if (params?.agent_id) query.set('agent_id', params.agent_id);
+  if (params?.creator && params.creator !== 'all') query.set('creator', params.creator);
   const qs = query.toString();
   return get(qs ? `/api/v1/knowledge-bases?${qs}` : '/api/v1/knowledge-bases');
+}
+
+// Read-only vector-store binding metadata enriched onto every KB
+// response (list, create, get, update, pin). Source carries where the
+// binding points; status reports whether that target is currently
+// reachable by the server.
+//
+//   - source 'env'    → KB uses the tenant's env-configured store
+//                       (RETRIEVE_DRIVER). vector_store_id is null and
+//                       vector_store_name is the localized "System
+//                       default" label; vector_store_engine_type still
+//                       reports the underlying engine (e.g. "postgres").
+//   - source 'user'   → KB is bound to a tenant-owned VectorStore.
+//                       vector_store_id / name / engine_type are real.
+//   - source 'shared' → KB belongs to a different tenant and is
+//                       readable via cross-organization sharing. The
+//                       server strips vector_store_id and engine_type
+//                       to avoid leaking the owner tenant's store
+//                       inventory; only this source marker arrives.
+//   - status 'unavailable' → the binding cannot be reached right now
+//                       (deleted row, registry miss, transient infra
+//                       failure). Operators recover via the global
+//                       Vector Stores settings page.
+export type VectorStoreSource = 'env' | 'user' | 'shared' | 'unavailable';
+export type VectorStoreStatus = 'available' | 'unavailable';
+
+export interface KnowledgeBaseStoreView {
+  vector_store_id?: string | null;
+  vector_store_name?: string;
+  vector_store_engine_type?: string;
+  vector_store_source?: VectorStoreSource;
+  vector_store_status?: VectorStoreStatus;
 }
 
 export function createKnowledgeBase(data: {
@@ -15,6 +59,11 @@ export function createKnowledgeBase(data: {
   chunking_config?: any;
   embedding_model_id?: string;
   summary_model_id?: string;
+  // Opt-in binding to a specific tenant-owned VectorStore. Omit (or
+  // send undefined / empty string) to fall back to the env-configured
+  // store. Immutable after creation — UpdateKnowledgeBase intentionally
+  // does not accept this field.
+  vector_store_id?: string;
   vlm_config?: {
     enabled: boolean;
     model_id?: string;

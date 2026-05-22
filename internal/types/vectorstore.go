@@ -64,17 +64,27 @@ func (v *VectorStore) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
-// validEngineTypes defines the engine types that can be registered as VectorStore.
-// InfinityRetrieverEngineType and ElasticFaissRetrieverEngineType are legacy/experimental
-// types that do not have standalone deployable instances, so they are excluded.
+// validEngineTypes defines the engine types that can be registered as a
+// DB-managed VectorStore (i.e., persisted to the vector_stores table and
+// listed in GetVectorStoreTypes for the UI dropdown).
+//
+// Excluded engines:
+//   - Infinity / ElasticFaiss — legacy/experimental, no standalone deployable instance.
+//   - Postgres / SQLite — only meaningful when bound to the app's default DB
+//     connection (UseDefaultConnection=true). The Postgres retriever's
+//     embeddings table is a single hard-coded name with no per-store
+//     partitioning, so registering a second Postgres store on the same
+//     instance has no separation effect — every KB sharing this engine
+//     ends up in the same physical table. These engines are still
+//     reachable via env stores (RETRIEVE_DRIVER=postgres/sqlite), which
+//     route through a separate code path (BuildEnvVectorStores) and do
+//     not pass through this validation.
 var validEngineTypes = map[RetrieverEngineType]bool{
-	PostgresRetrieverEngineType:        true,
 	ElasticsearchRetrieverEngineType:   true,
 	QdrantRetrieverEngineType:          true,
 	MilvusRetrieverEngineType:          true,
 	WeaviateRetrieverEngineType:        true,
 	DorisRetrieverEngineType:           true,
-	SQLiteRetrieverEngineType:          true,
 	TencentVectorDBRetrieverEngineType: true,
 }
 
@@ -109,6 +119,16 @@ type ConnectionConfig struct {
 	Username string `yaml:"username" json:"username,omitempty"`
 	Password string `yaml:"password" json:"password,omitempty"` // AES-GCM encrypted
 	APIKey   string `yaml:"api_key" json:"api_key,omitempty"`   // AES-GCM encrypted
+	// InsecureSkipVerify disables TLS certificate verification when
+	// talking to the backing store over HTTPS. Defaults to false
+	// (secure). Set to true ONLY for self-signed development clusters;
+	// production deployments should provide trusted certificates via
+	// the system CA pool. Cross-driver applicable but currently only
+	// the OpenSearch driver (Phase 3) reads this field. Note: this
+	// differs from the Qdrant-specific UseTLS below, which *enables*
+	// TLS on gRPC connections — InsecureSkipVerify only controls
+	// *verification* of an already-TLS connection.
+	InsecureSkipVerify bool `yaml:"insecure_skip_verify" json:"insecure_skip_verify,omitempty"`
 	// Qdrant
 	Host   string `yaml:"host" json:"host,omitempty"`
 	Port   int    `yaml:"port" json:"port,omitempty"`
@@ -194,14 +214,16 @@ func (c ConnectionConfig) GetEndpoint() string {
 	return ""
 }
 
-// MaskSensitiveFields returns a copy with Password and APIKey masked.
+// MaskSensitiveFields returns a copy with Password and APIKey replaced by the
+// shared RedactedSecretPlaceholder. Empty values stay empty so the frontend
+// can distinguish "set (hidden)" from "not set" without an extra flag.
 func (c ConnectionConfig) MaskSensitiveFields() ConnectionConfig {
 	masked := c
 	if masked.Password != "" {
-		masked.Password = "***"
+		masked.Password = RedactedSecretPlaceholder
 	}
 	if masked.APIKey != "" {
-		masked.APIKey = "***"
+		masked.APIKey = RedactedSecretPlaceholder
 	}
 	return masked
 }
@@ -483,6 +505,66 @@ func ValidateIndexConfig(ic IndexConfig) error {
 }
 
 // ---------------------------------------------------------------------------
+// StoreDisplay — API-safe projection embedded in other resource responses
+// ---------------------------------------------------------------------------
+
+// Vector store source classifiers used by API responses.
+// Kept as package-level constants so handlers and services share a single
+// vocabulary instead of repeating magic strings.
+const (
+	StoreSourceEnv         = "env"         // env-driven (RETRIEVE_DRIVER)
+	StoreSourceUser        = "user"        // DB-managed VectorStore row
+	StoreSourceShared      = "shared"      // cross-tenant access — metadata suppressed
+	StoreSourceUnavailable = "unavailable" // bound store row missing / registry miss
+)
+
+// StoreDisplay is the API-safe projection of a VectorStore for embedding in
+// other resource responses (notably KnowledgeBase). It carries only the
+// display-safe identifiers — never connection credentials.
+//
+// Source is one of the StoreSource* constants. EngineType is the underlying
+// engine name (e.g. "elasticsearch"). Status mirrors Source by default but
+// is split out to give the UI a stable boolean-like signal independent of
+// future Source value additions.
+type StoreDisplay struct {
+	Name       string `json:"vector_store_name,omitempty"`
+	Source     string `json:"vector_store_source,omitempty"`
+	EngineType string `json:"vector_store_engine_type,omitempty"`
+	Status     string `json:"vector_store_status,omitempty"` // "available" / "unavailable"
+}
+
+// DefaultStoreDisplay is the display payload for KBs that fall back to the
+// tenant's env stores (VectorStoreID == nil).
+func DefaultStoreDisplay() StoreDisplay {
+	return StoreDisplay{
+		Name:   "System default",
+		Source: StoreSourceEnv,
+		Status: "available",
+	}
+}
+
+// UnavailableStoreDisplay is used when the bound store cannot be resolved
+// (deleted row, registry miss, transient infra error). The UI can branch on
+// Status to guide recovery (admin tool, rebind, etc.).
+func UnavailableStoreDisplay() StoreDisplay {
+	return StoreDisplay{
+		Source: StoreSourceUnavailable,
+		Status: "unavailable",
+	}
+}
+
+// SharedStoreDisplay is returned for cross-tenant shared KB views so that
+// the underlying owner-tenant store's name and engine remain hidden — only
+// the fact that "this KB is shared" leaks, which is already implied by the
+// share grant itself.
+func SharedStoreDisplay() StoreDisplay {
+	return StoreDisplay{
+		Source: StoreSourceShared,
+		Status: "available",
+	}
+}
+
+// ---------------------------------------------------------------------------
 // VectorStoreResponse — API response DTO
 // ---------------------------------------------------------------------------
 
@@ -518,7 +600,11 @@ type VectorStoreTypeInfo struct {
 	IndexFields      []VectorStoreFieldInfo `json:"index_fields,omitempty"`
 }
 
-// VectorStoreFieldInfo describes a single configuration field.
+// VectorStoreFieldInfo describes a single configuration field exposed
+// by /api/v1/vector-stores/types for the registration UI. The optional
+// validation hints (`Immutable`, `Min`, `Max`, `Enum`) are used by both
+// the frontend (to disable / constrain inputs) and the backend
+// (defense-in-depth validation in the service layer).
 type VectorStoreFieldInfo struct {
 	Name        string `json:"name"`
 	Type        string `json:"type"` // "string", "number", "boolean"
@@ -526,6 +612,24 @@ type VectorStoreFieldInfo struct {
 	Sensitive   bool   `json:"sensitive,omitempty"`
 	Default     any    `json:"default,omitempty"`
 	Description string `json:"description,omitempty"`
+
+	// Immutable marks a field whose value cannot be changed after the
+	// VectorStore is first created. The UI shows the input as read-only
+	// in edit mode; the backend rejects modification attempts. Used by
+	// engines whose underlying index structure is fixed at create time
+	// (e.g. OpenSearch's HNSW engine / M / ef_construction).
+	Immutable bool `json:"immutable,omitempty"`
+
+	// Min / Max set inclusive bounds for "number"-typed fields. nil
+	// means no bound on that side. Frontend uses these to constrain
+	// inputs; backend re-validates as defense-in-depth.
+	Min *float64 `json:"min,omitempty"`
+	Max *float64 `json:"max,omitempty"`
+
+	// Enum constrains the allowed string values. Empty means no
+	// constraint. Used by fields whose value space is closed (e.g.
+	// OpenSearch's knn_engine ∈ {"lucene", "faiss"}).
+	Enum []string `json:"enum,omitempty"`
 }
 
 // GetVectorStoreTypes returns metadata for all supported engine types.
